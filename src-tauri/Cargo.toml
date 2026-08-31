@@ -1,0 +1,55 @@
+[package]
+name = "hs-offline-tracker"
+version = "0.1.0"
+description = "Offline-first Hero Siege loot journal, alert engine and overlay"
+authors = ["falorfrozen-cmd"]
+# What the packages print. Without it the RPM header says "License: Unspecified"
+# for a repository that has carried a LICENSE file all along, and a distribution
+# reading that header has no way to know it may redistribute this.
+license = "MIT"
+edition = "2021"
+# The tree uses `is_multiple_of` (1.87) and `is_none_or` (1.82); the lock file
+# then asks for more — `time` wants 1.88 — so this is the real floor. Ubuntu
+# 24.04's apt rustc is 1.75, and against it these read as missing methods
+# rather than as an old compiler. Install Rust with rustup.
+rust-version = "1.88"
+
+[lib]
+name = "hs_offline_tracker_lib"
+# the template ships staticlib and cdylib for mobile targets; this is a desktop
+# app, so main.rs links the rlib and nothing else is built
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-dialog = "2"
+# Refuses to be started twice; see the plugin registration in `run`.
+tauri-plugin-single-instance = "2"
+# wayland-data-control lets the clipboard work in a Wayland session that has no
+# XWayland; on Windows the feature is inert
+arboard = { version = "3", features = ["wayland-data-control"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+flate2 = "1"
+form_urlencoded = "1"
+sysinfo = "0.33"
+discord-rich-presence = "1.1.0"
+
+# autostart is a registry value on Windows and a .desktop file elsewhere
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+
+[lints.rust]
+# the MSVC linker prints an informational line when it creates the import
+# library; rustc surfaces it as a warning on every build
+linker_messages = "allow"

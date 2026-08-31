@@ -1,0 +1,50 @@
+{
+  "schema": 2,
+  "build_id": "S10-code-1dde65e4",
+  "executable": "Hero_Siege.exe",
+  "pe_timestamp": "0x6A8DDE33",
+  "machine": "0x8664",
+  "text_raw_size": 232739840,
+  "text_sha256": "1dde65e44f2d8f90158b290dc60b71f80a4717393f2488a254bb7871e218d917",
+  "full_file_diagnostics": [
+    {
+      "kind": "reviewed baseline",
+      "file_size": 303708672,
+      "sha256": "8046293cc8df1c735c680860d3f26d33c6993afb2a2469bac7f1d1d2ee882f6b"
+    },
+    {
+      "kind": "reviewed Aurie-patched output",
+      "file_size": 303708672,
+      "sha256": "06b103314f5f472d0ebc17b64caa7d73f9d9ba683ebeb71379ad97f95d813df2"
+    }
+  ],
+  "routes": [
+    {
+      "name": "gml_Script_GoldLogAdd",
+      "argc": 2,
+      "arg0": "positive integral gold delta",
+      "emits": "session_delta.gold"
+    },
+    {
+      "name": "gml_Script_ExperienceUpdate",
+      "argc": 2,
+      "arg0": "positive integral character XP delta",
+      "emits": "session_delta.xp",
+      "rejected_result": "VALUE_BOOL false"
+    },
+    {
+      "name": "gml_Script_EnemyAddStatistics",
+      "argc": 1,
+      "arg0": "non-negative integral killStatistic ID/index (0 is valid)",
+      "emits": "session_delta.kills",
+      "session_delta_kills_enabled": true,
+      "validation": "packaged tracker observed kill_candidate_calls 96->152 (+56) while statisticTotalMonsterKills changed 45516->45572 (+56) in the same save interval"
+    },
+    {
+      "name": "gml_Script_LootGroundInit",
+      "enabled": false,
+      "emits": "none",
+      "validation": "drop caller and ABI were not re-reviewed for this legacy code fingerprint; producer keeps this route fail-closed"
+    }
+  ]
+}

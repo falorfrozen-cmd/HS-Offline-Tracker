@@ -1,0 +1,78 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "HS Offline Tracker",
+  "version": "0.1.0",
+  "identifier": "io.falorfrozen.hsofflinetracker",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5176",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "dashboard",
+        "title": "HS Offline Tracker",
+        "width": 1180,
+        "height": 760,
+        "resizable": true,
+        "visible": true,
+        "alwaysOnTop": false,
+        "decorations": false,
+        "transparent": false,
+        "shadow": false,
+        "skipTaskbar": false,
+        "center": true,
+        "minWidth": 940,
+        "minHeight": 620
+      },
+      {
+        "label": "main",
+        "title": "HS Offline Tracker — Overlay",
+        "width": 472,
+        "height": 147,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "skipTaskbar": true,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "**/sounds/*"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "resources": [
+      "../LICENSE",
+      "../THIRD_PARTY_NOTICES.md",
+      "../PROTOCOL.md"
+    ],
+    "licenseFile": "../LICENSE",
+    "shortDescription": "Offline Hero Siege loot journal and overlay",
+    "longDescription": "An offline-first session journal for Hero Siege with configurable drop alerts, original visual effects, custom sounds, run history and an always-on-top overlay. It has no automatic telemetry or uploads.",
+    "category": "Game",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 falorfrozen-cmd and contributors"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "hs-offline-tracker",
+  "version": "0.1.0",
+  "description": "Local-event Hero Siege loot journal, alert engine and overlay for offline play.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "node scripts/tauri.mjs dev",
+    "release": "node scripts/tauri.mjs build",
+    "package": "node scripts/tauri.mjs build",
+    "demo": "node scripts/replay-demo.mjs",
+    "generate:sounds": "node scripts/generate-alerts.mjs",
+    "ver": "node scripts/set-version.mjs",
+    "tauri": "node scripts/tauri.mjs",
+    "test": "node scripts/test.mjs",
+    "check": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@tauri-apps/cli": "^2.11.4",
+    "svelte": "^5.46.4",
+    "vite": "^8.2.2"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  }
+}

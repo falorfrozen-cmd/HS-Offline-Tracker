@@ -1,0 +1,63 @@
+{
+  "schema": 2,
+  "build_id": "S10-code-c4dc91d9",
+  "executable": "Hero_Siege.exe",
+  "pe_timestamp": "0x6A91A8B3",
+  "machine": "0x8664",
+  "text_raw_size": 212810240,
+  "text_sha256": "c4dc91d9dfa4982ac8b9044f2f88fd6ed64a7b84cd641bc20c4517c6129d18fb",
+  "full_file_diagnostics": [
+    {
+      "kind": "reviewed Steam baseline",
+      "file_size": 281599488,
+      "sha256": "438bf4848688c5be52ac15f26f02b46da620d90587c28e766a9cea190f3a7de4"
+    }
+  ],
+  "routes": [
+    {
+      "name": "gml_Script_GoldLogAdd",
+      "argc": 2,
+      "arg1": "positive integral gold delta",
+      "emits": "session_delta.gold"
+    },
+    {
+      "name": "gml_Script_ExperienceUpdate",
+      "argc": 2,
+      "arg0": "positive integral character XP delta",
+      "emits": "session_delta.xp",
+      "rejected_result": "VALUE_BOOL false"
+    },
+    {
+      "name": "gml_Script_EnemyAddStatistics",
+      "argc": 1,
+      "arg0": "non-negative integral killStatistic ID/index (0 is valid)",
+      "emits": "session_delta.kills",
+      "session_delta_kills_enabled": true,
+      "validation": "packaged tracker observed kill_candidate_calls 96->152 (+56) while statisticTotalMonsterKills changed 45516->45572 (+56) in the same save interval"
+    },
+    {
+      "name": "gml_Script_LootGroundInit",
+      "enabled": true,
+      "argc": 2,
+      "item": "arg0 Loot_Ground instance -> itemInstance after native placement",
+      "rarity": "itemInfoStruct[27]",
+      "item_type": "itemType",
+      "item_id": "itemDefinitionStruct.b",
+      "emits": "ground_drop for validated tracked rarity IDs 4, 6, 7, 9 and 10",
+      "source": "game_ground_item_create",
+      "allowed_caller_return_rvas": [
+        "0x04C3DB7C",
+        "0x04C4E150",
+        "0x04C51259",
+        "0x04C51AB0",
+        "0x04D15079"
+      ],
+      "excluded_callers": [
+        "gml_Script_CA_playerItemDrop",
+        "gml_Object_Api_Exchange_Client_obj_Other_68 (two call sites)",
+        "gml_Script_anon@26827@gml_Object_Zone_State_Buffer_obj_Create_0"
+      ],
+      "validation": "all nine direct call sites were enumerated from the exact .text build; only the five local generation paths are accepted"
+    }
+  ]
+}

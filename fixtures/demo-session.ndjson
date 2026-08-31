@@ -1,0 +1,11 @@
+{"protocol":"hs-offline-tracker/1","kind":"game_started","event_id":"demo-start"}
+{"protocol":"hs-offline-tracker/1","kind":"character","event_id":"demo-character","name":"Shaman","season":10,"level":100,"hero_level":300,"difficulty":6,"hell_sub":5,"act":9,"kills":4200,"experience":75000000}
+{"protocol":"hs-offline-tracker/1","kind":"room","event_id":"demo-room","room":"Act_09_04"}
+{"protocol":"hs-offline-tracker/1","kind":"vitals","event_id":"demo-vitals","magic_find":12850,"level":100,"hero_level":300,"satanic_here":true}
+{"protocol":"hs-offline-tracker/1","kind":"currency","event_id":"demo-gold","gss":825000,"delta":12500}
+{"protocol":"hs-offline-tracker/1","kind":"xp_gain","event_id":"demo-xp","amount":42000}
+{"protocol":"hs-offline-tracker/1","kind":"ground_drop","event_id":"demo-satanic","source":"monster","room":"Act_09_04","item":{"name":"Ashen Reliquary","rarity":"Satanic","tier":5,"itemType":3,"item_id":901,"weapon_type":10,"seed":101,"itemDataHash":"demo-hash-1"}}
+{"protocol":"hs-offline-tracker/1","kind":"ground_drop","event_id":"demo-angelic","source":"boss","room":"Act_09_04","item":{"name":"Celestial Signal","rarity":"Angelic","tier":6,"itemType":1,"item_id":902,"seed":102,"itemDataHash":"demo-hash-2"}}
+{"protocol":"hs-offline-tracker/1","kind":"item_picked_up","event_id":"demo-angelic-pickup","source":"boss","room":"Act_09_04","item":{"name":"Celestial Signal","rarity":"Angelic","tier":6,"itemType":1,"item_id":902,"seed":102,"itemDataHash":"demo-hash-2"}}
+{"protocol":"hs-offline-tracker/1","kind":"satanic_zone","event_id":"demo-zone","zone":"Act_09_04","buffs":[1,4,7],"debuffs":[2,8]}
+{"protocol":"hs-offline-tracker/1","kind":"game_stopped","event_id":"demo-stop"}
