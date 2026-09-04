@@ -3158,6 +3158,7 @@ pub fn run() {
             get_extra,
             producer_status,
             install_producer,
+            pick_game_exe,
             reset_stats,
             set_paused,
             about,
@@ -3325,14 +3326,37 @@ pub fn run() {
 // ---- live sensor installer -------------------------------------------------
 
 const PRODUCER_DLL: &str = "HSOfflineTrackerProducer.dll";
+/// The Aurie/YYToolkit mod loader the sensor runs under. It ships with the
+/// tracker so a player without ForgePact gets a working install from the one
+/// button: the three files below go in, and the game executable is patched to
+/// load AurieCore.dll (a clean copy is kept as `Hero_Siege.exe.aurie_backup`).
+const AURIE_CORE: &str = "AurieCore.dll";
+const YYTOOLKIT: &str = "YYToolkit.dll";
+const AURIE_PATCHER: &str = "AuriePatcher.exe";
+const GAME_EXE_NAME: &str = "Hero_Siege.exe";
+const AURIE_BACKUP_SUFFIX: &str = ".aurie_backup";
+const PATCHER_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// What the settings page needs to say whether live numbers can arrive: is the
-/// game seen, does it carry Aurie, is the sensor beside it, and is it talking.
+/// game seen, does it carry the loader, is the sensor beside it, is it talking.
 #[derive(Serialize)]
 pub struct ProducerStatus {
     game_exe: Option<String>,
     game_dir: Option<String>,
+    /// `Hero_Siege.exe` is in the game folder
+    exe_present: bool,
+    /// AurieCore.dll beside the executable
     aurie: bool,
+    /// mods/aurie/YYToolkit.dll
+    yytk: bool,
+    /// the executable carries the `.aurie` section, so it loads AurieCore.dll
+    patched: bool,
+    /// all three above: the game will load the sensor
+    loader_ready: bool,
+    /// looks like a Steam/EAC install: a warning, the backup makes it reversible
+    eac: bool,
+    /// this build carries AurieCore.dll, YYToolkit.dll and AuriePatcher.exe
+    loader_bundled: bool,
     installed: bool,
     installed_size: u64,
     installed_current: bool,
@@ -3353,7 +3377,7 @@ fn remember_game_dir(dir: &Path) {
 }
 
 /// The game's `bin` folder: from the running process when there is one, else
-/// the one remembered from the last time.
+/// the one remembered from the last time (seen running, or picked by hand).
 fn game_dir() -> Option<PathBuf> {
     if let Some(dir) = sniffer::game_exe().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
         remember_game_dir(&dir);
@@ -3362,29 +3386,356 @@ fn game_dir() -> Option<PathBuf> {
     remembered_game_dir()
 }
 
-/// The sensor shipped with this build: beside the executable in a package,
-/// or the producer's own build output in a development checkout.
-fn bundled_producer(app: &AppHandle) -> Option<PathBuf> {
+/// A file shipped with this build: under the resource folder the way the
+/// bundler lays it out (`<sub>/<name>`, or the `_up_` mirror of the source
+/// tree), beside the executable, or in the development checkout.
+fn bundled_file(app: &AppHandle, name: &str, sub: &str, dev: &[&str]) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(resources) = app.path().resource_dir() {
-        candidates.push(resources.join(PRODUCER_DLL));
-        candidates.push(resources.join("producer").join(PRODUCER_DLL));
+        candidates.push(resources.join(sub).join(name));
+        candidates.push(resources.join(name));
+        let mut up = resources.join("_up_");
+        for part in dev {
+            up.push(part);
+        }
+        candidates.push(up.join(name));
     }
-    candidates.push(exe_dir().join(PRODUCER_DLL));
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("aurie-producer")
-            .join("build")
-            .join("bin")
-            .join("Release")
-            .join(PRODUCER_DLL),
-    );
+    candidates.push(exe_dir().join(sub).join(name));
+    candidates.push(exe_dir().join(name));
+    let mut checkout = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    for part in dev {
+        checkout.push(part);
+    }
+    candidates.push(checkout.join(name));
     candidates.into_iter().find(|p| p.is_file())
+}
+
+/// The sensor shipped with this build, or the producer's own build output in
+/// a development checkout.
+fn bundled_producer(app: &AppHandle) -> Option<PathBuf> {
+    bundled_file(app, PRODUCER_DLL, "producer", &["aurie-producer", "build", "bin", "Release"])
+}
+
+fn bundled_loader_file(app: &AppHandle, name: &str) -> Option<PathBuf> {
+    bundled_file(app, name, "aurie-loader", &["aurie-loader"])
 }
 
 fn file_len(path: &Path) -> u64 {
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+fn unix_stamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// True when the head of the executable names an `.aurie` section: the mark
+/// AuriePatcher leaves, and the only thing that makes the game load
+/// AurieCore.dll.
+fn exe_is_patched(exe: &Path) -> bool {
+    use std::io::Read as _;
+    let Ok(mut f) = std::fs::File::open(exe) else {
+        return false;
+    };
+    let mut head = vec![0u8; 4096];
+    let n = f.read(&mut head).unwrap_or(0);
+    head[..n].windows(6).any(|w| w == b".aurie")
+}
+
+/// Looks like a Steam/EAC install: there EAC relaunches the clean executable
+/// and online play could break. Reported, not enforced — the offline copies
+/// people mod carry stubbed EAC files too (ForgePact installs there with the
+/// same note), and the backup makes the patch reversible. A Steam-emulated
+/// copy with SmokeAPI beside the game is not even worth the note.
+fn eac_protected(dir: &Path) -> bool {
+    if dir.join("SmokeAPI.config.json").is_file() {
+        return false;
+    }
+    dir.join("EasyAntiCheat").is_dir()
+        || dir.join("EOSSDK-Win64-Shipping.dll").is_file()
+        || dir.join("start_protected_game.exe").is_file()
+}
+
+fn loader_ready(dir: &Path) -> bool {
+    dir.join(AURIE_CORE).is_file()
+        && dir.join("mods").join("aurie").join(YYTOOLKIT).is_file()
+        && exe_is_patched(&dir.join(GAME_EXE_NAME))
+}
+
+/// Byte-for-byte equality without holding either file in memory: the game
+/// executable is close to 300 MB.
+fn same_contents(a: &Path, b: &Path) -> bool {
+    use std::io::Read as _;
+    if file_len(a) != file_len(b) {
+        return false;
+    }
+    let (Ok(mut fa), Ok(mut fb)) = (std::fs::File::open(a), std::fs::File::open(b)) else {
+        return false;
+    };
+    let mut ba = vec![0u8; 1 << 20];
+    let mut bb = vec![0u8; 1 << 20];
+    loop {
+        let n = match fa.read(&mut ba) {
+            Ok(n) => n,
+            Err(_) => return false,
+        };
+        if n == 0 {
+            return matches!(fb.read(&mut bb), Ok(0));
+        }
+        if fb.read_exact(&mut bb[..n]).is_err() || ba[..n] != bb[..n] {
+            return false;
+        }
+    }
+}
+
+/// Copies through a sibling temp file and verifies before it takes the
+/// target's name, so a half-written game executable can never be left behind.
+fn verified_copy(from: &Path, to: &Path) -> Result<(), String> {
+    let name = to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = to.with_file_name(format!("{name}.part"));
+    std::fs::copy(from, &tmp)
+        .map_err(|e| format!("cannot copy {} to {}: {e}", from.display(), tmp.display()))?;
+    if !same_contents(from, &tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("verification failed after copying {}", from.display()));
+    }
+    std::fs::rename(&tmp, to).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("cannot replace {}: {e}", to.display())
+    })
+}
+
+/// Places a loader file unless the same bytes are already there; says whether
+/// anything was written.
+fn place(from: &Path, to: &Path) -> Result<bool, String> {
+    if to.is_file() && same_contents(from, to) {
+        return Ok(false);
+    }
+    verified_copy(from, to)?;
+    Ok(true)
+}
+
+/// Keeps a verified clean copy of the executable before it is patched. An
+/// older backup that no longer matches (the game was updated) is set aside,
+/// never overwritten: the current clean exe is what a rollback must reproduce.
+fn prepare_backup(exe: &Path, backup: &Path) -> Result<bool, String> {
+    if exe_is_patched(exe) {
+        return Err("cannot back up an executable that is already patched".into());
+    }
+    if backup.is_file() && !exe_is_patched(backup) && same_contents(exe, backup) {
+        return Ok(false);
+    }
+    if backup.exists() {
+        let name = backup.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let stale = backup.with_file_name(format!("{name}.stale_{}", unix_stamp()));
+        std::fs::rename(backup, &stale)
+            .map_err(|e| format!("cannot set aside the old backup {}: {e}", backup.display()))?;
+    }
+    verified_copy(exe, backup)?;
+    Ok(true)
+}
+
+struct PeSection {
+    name: [u8; 8],
+    raw_offset: u32,
+    raw_size: u32,
+}
+
+struct PeLayout {
+    machine: u16,
+    optional_magic: u16,
+    pe_offset: u32,
+    optional_size: u16,
+    sections: Vec<PeSection>,
+    file_size: u64,
+}
+
+/// The PE fields needed to compare a patched executable with its clean base.
+fn pe_layout(path: &Path) -> Result<PeLayout, String> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    let bad = |what: &str| format!("{}: {what}", path.display());
+    let mut f = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let file_size = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let mut dos = [0u8; 64];
+    f.read_exact(&mut dos).map_err(|_| bad("not a PE file"))?;
+    if &dos[..2] != b"MZ" {
+        return Err(bad("not a PE file"));
+    }
+    let pe_offset = u32::from_le_bytes([dos[60], dos[61], dos[62], dos[63]]);
+    f.seek(SeekFrom::Start(u64::from(pe_offset))).map_err(|_| bad("bad PE header offset"))?;
+    let mut coff = [0u8; 24];
+    f.read_exact(&mut coff).map_err(|_| bad("truncated PE header"))?;
+    if &coff[..4] != b"PE\0\0" {
+        return Err(bad("PE signature missing"));
+    }
+    let machine = u16::from_le_bytes([coff[4], coff[5]]);
+    let count = usize::from(u16::from_le_bytes([coff[6], coff[7]]));
+    let optional_size = u16::from_le_bytes([coff[20], coff[21]]);
+    let mut magic = [0u8; 2];
+    f.read_exact(&mut magic).map_err(|_| bad("truncated optional header"))?;
+    let table = u64::from(pe_offset) + 24 + u64::from(optional_size);
+    f.seek(SeekFrom::Start(table)).map_err(|_| bad("bad section table offset"))?;
+    let mut sections = Vec::with_capacity(count);
+    for _ in 0..count {
+        let mut s = [0u8; 40];
+        f.read_exact(&mut s).map_err(|_| bad("truncated section table"))?;
+        let mut name = [0u8; 8];
+        name.copy_from_slice(&s[..8]);
+        sections.push(PeSection {
+            name,
+            raw_size: u32::from_le_bytes([s[16], s[17], s[18], s[19]]),
+            raw_offset: u32::from_le_bytes([s[20], s[21], s[22], s[23]]),
+        });
+    }
+    Ok(PeLayout { machine, optional_magic: u16::from_le_bytes(magic), pe_offset, optional_size, sections, file_size })
+}
+
+/// The patched executable must be the clean one plus a single trailing
+/// `.aurie` section and nothing else: same headers, the old sections where
+/// they were, the new one appended where the clean file ended.
+fn same_aurie_base(exe: &Path, backup: &Path) -> Result<(), String> {
+    if !exe_is_patched(exe) || exe_is_patched(backup) {
+        return Err("patch mark missing".into());
+    }
+    let p = pe_layout(exe)?;
+    let c = pe_layout(backup)?;
+    let is_aurie = |s: &PeSection| &s.name[..6] == b".aurie" && s.name[6] == 0;
+    if c.sections.iter().any(is_aurie) {
+        return Err("the backup already carries an .aurie section".into());
+    }
+    if p.sections.len() != c.sections.len() + 1 {
+        return Err("section count differs by more than the .aurie section".into());
+    }
+    let Some(aurie) = p.sections.last() else {
+        return Err("no sections".into());
+    };
+    if !is_aurie(aurie) || p.sections[..p.sections.len() - 1].iter().any(is_aurie) {
+        return Err(".aurie is not the last section".into());
+    }
+    if p.machine != c.machine
+        || p.optional_magic != c.optional_magic
+        || p.pe_offset != c.pe_offset
+        || p.optional_size != c.optional_size
+    {
+        return Err("PE headers changed".into());
+    }
+    for (a, b) in p.sections.iter().zip(&c.sections) {
+        if a.name != b.name || a.raw_offset != b.raw_offset || a.raw_size != b.raw_size {
+            let name = String::from_utf8_lossy(&b.name);
+            return Err(format!("section {} changed", name.trim_end_matches('\0')));
+        }
+    }
+    if u64::from(aurie.raw_offset) != c.file_size {
+        return Err(".aurie is not appended at the clean file's end".into());
+    }
+    Ok(())
+}
+
+/// Runs AuriePatcher without a console window and with a deadline; gives back
+/// the tail of what it printed.
+fn run_patcher(patcher: &Path, exe: &Path, core: &Path) -> Result<String, String> {
+    use std::process::Stdio;
+    fn drain<R: std::io::Read + Send + 'static>(r: Option<R>) -> std::thread::JoinHandle<String> {
+        std::thread::spawn(move || {
+            let mut s = String::new();
+            if let Some(mut r) = r {
+                let _ = r.read_to_string(&mut s);
+            }
+            s
+        })
+    }
+    let mut cmd = std::process::Command::new(patcher);
+    cmd.arg(exe).arg(core).arg("install");
+    if let Some(dir) = exe.parent() {
+        cmd.current_dir(dir);
+    }
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("cannot start {}: {e}", patcher.display()))?;
+    let out = drain(child.stdout.take());
+    let err = drain(child.stderr.take());
+    let deadline = Instant::now() + PATCHER_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(200)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("AuriePatcher did not finish within {} s", PATCHER_TIMEOUT.as_secs()));
+            }
+            Err(e) => return Err(format!("AuriePatcher: {e}")),
+        }
+    };
+    let stdout = out.join().unwrap_or_default();
+    let stderr = err.join().unwrap_or_default();
+    let text = if stdout.trim().is_empty() { stderr } else { stdout };
+    let skip = text.chars().count().saturating_sub(200);
+    let tail: String = text.chars().skip(skip).collect();
+    if status.success() {
+        Ok(tail)
+    } else {
+        Err(format!("AuriePatcher failed ({status}): {tail}"))
+    }
+}
+
+/// Puts the Aurie/YYToolkit loader in place the way ForgePact does:
+/// AurieCore.dll beside the game, YYToolkit.dll under mods/aurie, and the
+/// executable patched to load the core — after a verified clean backup, and
+/// rolled back unless the result is exactly "clean + .aurie".
+fn install_loader(app: &AppHandle, dir: &Path, steps: &mut Vec<String>) -> Result<(), String> {
+    let exe = dir.join(GAME_EXE_NAME);
+    if !exe.is_file() {
+        return Err(format!("{GAME_EXE_NAME} is not in {}.", dir.display()));
+    }
+    let missing = |name: &str| format!("This build does not carry {name}, so it cannot set up the mod loader.");
+    let core_src = bundled_loader_file(app, AURIE_CORE).ok_or_else(|| missing(AURIE_CORE))?;
+    let yytk_src = bundled_loader_file(app, YYTOOLKIT).ok_or_else(|| missing(YYTOOLKIT))?;
+    let patcher = bundled_loader_file(app, AURIE_PATCHER).ok_or_else(|| missing(AURIE_PATCHER))?;
+
+    let core = dir.join(AURIE_CORE);
+    if place(&core_src, &core)? {
+        steps.push(format!("{AURIE_CORE} placed beside the game"));
+    }
+    let mods = dir.join("mods").join("aurie");
+    for folder in [mods.clone(), dir.join("mods").join("native")] {
+        std::fs::create_dir_all(&folder).map_err(|e| format!("cannot create {}: {e}", folder.display()))?;
+    }
+    if place(&yytk_src, &mods.join(YYTOOLKIT))? {
+        steps.push(format!("{YYTOOLKIT} placed in mods\\aurie"));
+    }
+    if exe_is_patched(&exe) {
+        return Ok(());
+    }
+    let backup = dir.join(format!("{GAME_EXE_NAME}{AURIE_BACKUP_SUFFIX}"));
+    if prepare_backup(&exe, &backup)? {
+        steps.push(format!("clean copy kept as {GAME_EXE_NAME}{AURIE_BACKUP_SUFFIX}"));
+    }
+    let patched = run_patcher(&patcher, &exe, &core).and_then(|out| {
+        if !exe_is_patched(&exe) {
+            return Err(format!("AuriePatcher reported success but the .aurie section is missing: {out}"));
+        }
+        same_aurie_base(&exe, &backup).map_err(|why| format!("AuriePatcher changed more than expected ({why})"))
+    });
+    if let Err(why) = patched {
+        // whatever went wrong, the game stays playable
+        return Err(match verified_copy(&backup, &exe) {
+            Ok(()) => format!("{why}. {GAME_EXE_NAME} was restored from the backup."),
+            Err(e) => format!(
+                "{why}. Restoring failed too ({e}); copy {GAME_EXE_NAME}{AURIE_BACKUP_SUFFIX} over {GAME_EXE_NAME} by hand."
+            ),
+        });
+    }
+    steps.push(format!("{GAME_EXE_NAME} patched to load Aurie"));
+    crate::log::say("producer", &format!("loader installed in {}", dir.display()));
+    Ok(())
 }
 
 #[tauri::command]
@@ -3401,11 +3752,21 @@ fn producer_status(app: AppHandle) -> ProducerStatus {
         && installed_path
             .as_ref()
             .zip(bundled.as_ref())
-            .and_then(|(a, b)| Some(std::fs::read(a).ok()? == std::fs::read(b).ok()?))
-            .unwrap_or(false);
+            .is_some_and(|(a, b)| same_contents(a, b));
+    let aurie = dir.as_ref().is_some_and(|d| d.join(AURIE_CORE).is_file());
+    let yytk = dir.as_ref().is_some_and(|d| d.join("mods").join("aurie").join(YYTOOLKIT).is_file());
+    let patched = dir.as_ref().is_some_and(|d| exe_is_patched(&d.join(GAME_EXE_NAME)));
     ProducerStatus {
         game_exe: game_exe.map(|p| p.to_string_lossy().into_owned()),
-        aurie: dir.as_ref().is_some_and(|d| d.join("AurieCore.dll").is_file()),
+        exe_present: dir.as_ref().is_some_and(|d| d.join(GAME_EXE_NAME).is_file()),
+        aurie,
+        yytk,
+        patched,
+        loader_ready: aurie && yytk && patched,
+        eac: dir.as_ref().is_some_and(|d| eac_protected(d)),
+        loader_bundled: [AURIE_CORE, YYTOOLKIT, AURIE_PATCHER]
+            .iter()
+            .all(|name| bundled_loader_file(&app, name).is_some()),
         game_dir: dir.map(|p| p.to_string_lossy().into_owned()),
         installed,
         installed_size,
@@ -3417,32 +3778,32 @@ fn producer_status(app: AppHandle) -> ProducerStatus {
     }
 }
 
-/// Copies the live sensor into the game's Aurie mod folder. Never touches the
-/// game's own files; a previous copy of the sensor is kept beside the new one.
-#[tauri::command]
+/// Installs the live sensor, and the Aurie/YYToolkit loader first when the
+/// game does not have it: the button in Settings works without ForgePact. A
+/// previous copy of the sensor is kept beside the new one. Off the main
+/// thread, because the backup and the patch of a 300 MB executable take a
+/// while and the windows must keep drawing.
+#[tauri::command(async)]
 fn install_producer(app: AppHandle) -> Result<String, String> {
     let dir = game_dir().ok_or_else(|| {
-        "The game has not been seen yet. Start Hero Siege once, then install.".to_string()
+        "The game has not been seen yet. Start Hero Siege once, or pick Hero_Siege.exe.".to_string()
     })?;
-    if !dir.join("AurieCore.dll").is_file() {
-        return Err(format!(
-            "Aurie is not installed in {}. Install the Aurie/YYToolkit mod loader first (ForgePact's Install button does this).",
-            dir.display()
-        ));
+    if sniffer::game_up() {
+        return Err("Hero Siege is running. Close the game, then install.".into());
     }
     let source = bundled_producer(&app)
         .ok_or_else(|| "This build does not carry the live sensor file.".to_string())?;
+    let mut steps = Vec::new();
+    if !loader_ready(&dir) {
+        install_loader(&app, &dir, &mut steps)?;
+    }
     let mods = dir.join("mods").join("aurie");
     std::fs::create_dir_all(&mods).map_err(|e| format!("cannot create {}: {e}", mods.display()))?;
     let target = mods.join(PRODUCER_DLL);
     if target.is_file() {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
         // Aurie loads every *.dll in this folder, so the copy kept aside must
         // not end in .dll.
-        let backup = mods.join(format!("{PRODUCER_DLL}.previous_{stamp}"));
+        let backup = mods.join(format!("{PRODUCER_DLL}.previous_{}", unix_stamp()));
         let _ = std::fs::copy(&target, &backup);
     }
     std::fs::copy(&source, &target).map_err(|e| {
@@ -3452,8 +3813,34 @@ fn install_producer(app: AppHandle) -> Result<String, String> {
             format!("cannot write {}: {e}", target.display())
         }
     })?;
+    steps.push(format!("live sensor installed in {}", mods.display()));
     crate::log::say("producer", &format!("installed {} -> {}", source.display(), target.display()));
-    Ok(format!("Live sensor installed to {}. Start Hero Siege to use it.", mods.display()))
+    Ok(format!("{}. Start Hero Siege to use it.", steps.join("; ")))
+}
+
+/// Lets the player point at Hero_Siege.exe when the game has never run beside
+/// the tracker; the folder is remembered like a seen process. `async` for the
+/// reason given at `export_filter`: a native dialog must not block the main
+/// thread.
+#[tauri::command(async)]
+fn pick_game_exe(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("Hero Siege", &["exe"])
+        .set_title("Pick Hero_Siege.exe")
+        .blocking_pick_file();
+    let Some(path) = picked.and_then(|p| p.into_path().ok()) else {
+        return Ok(None);
+    };
+    let dir = path
+        .parent()
+        .map(Path::to_path_buf)
+        .filter(|d| d.join(GAME_EXE_NAME).is_file())
+        .ok_or_else(|| format!("{GAME_EXE_NAME} is not in that folder."))?;
+    remember_game_dir(&dir);
+    Ok(Some(dir.to_string_lossy().into_owned()))
 }
 
 #[cfg(test)]
@@ -3651,5 +4038,155 @@ mod tests {
             b"sound"
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+}
+
+/// The loader installer's judgement about executables, exercised on small
+/// synthetic PE files: what AuriePatcher is expected to produce is accepted,
+/// anything else is refused and the backup discipline holds.
+#[cfg(test)]
+mod loader_tests {
+    use super::*;
+
+    /// A minimal x64 PE: DOS stub, COFF header, a 240-byte optional header
+    /// and the given sections, raw data laid out from 0x200 in order.
+    fn synthetic_pe(sections: &[(&[u8; 8], u32)]) -> Vec<u8> {
+        let mut f = vec![0u8; 0x200];
+        f[..2].copy_from_slice(b"MZ");
+        f[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+        f[0x80..0x84].copy_from_slice(b"PE\0\0");
+        f[0x84..0x86].copy_from_slice(&0x8664u16.to_le_bytes());
+        f[0x86..0x88].copy_from_slice(&(sections.len() as u16).to_le_bytes());
+        f[0x94..0x96].copy_from_slice(&240u16.to_le_bytes());
+        f[0x98..0x9a].copy_from_slice(&0x20bu16.to_le_bytes());
+        let mut raw = 0x200u32;
+        for (i, (name, size)) in sections.iter().enumerate() {
+            let at = 0x188 + i * 40;
+            f[at..at + 8].copy_from_slice(*name);
+            f[at + 16..at + 20].copy_from_slice(&size.to_le_bytes());
+            f[at + 20..at + 24].copy_from_slice(&raw.to_le_bytes());
+            raw += size;
+        }
+        f.resize(raw as usize, 0xAB);
+        f
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("hsot-loader-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    const CLEAN: &[(&[u8; 8], u32)] = &[(b".text\0\0\0", 0x400), (b".data\0\0\0", 0x200)];
+    const PATCHED: &[(&[u8; 8], u32)] =
+        &[(b".text\0\0\0", 0x400), (b".data\0\0\0", 0x200), (b".aurie\0\0", 0x200)];
+
+    #[test]
+    fn the_patch_mark_is_seen_only_on_the_patched_file() {
+        let dir = scratch("mark");
+        let clean = dir.join("clean.exe");
+        let patched = dir.join("patched.exe");
+        std::fs::write(&clean, synthetic_pe(CLEAN)).unwrap();
+        std::fs::write(&patched, synthetic_pe(PATCHED)).unwrap();
+        assert!(!exe_is_patched(&clean));
+        assert!(exe_is_patched(&patched));
+        assert!(!exe_is_patched(&dir.join("missing.exe")));
+    }
+
+    #[test]
+    fn clean_plus_a_trailing_aurie_section_is_the_only_accepted_result() {
+        let dir = scratch("base");
+        let clean = dir.join("Hero_Siege.exe.aurie_backup");
+        let patched = dir.join("Hero_Siege.exe");
+        std::fs::write(&clean, synthetic_pe(CLEAN)).unwrap();
+        std::fs::write(&patched, synthetic_pe(PATCHED)).unwrap();
+        assert_eq!(same_aurie_base(&patched, &clean), Ok(()));
+
+        // a section that moved or grew is not "clean plus .aurie"
+        let mut grown = synthetic_pe(PATCHED);
+        grown[0x188 + 16..0x188 + 20].copy_from_slice(&0x500u32.to_le_bytes());
+        std::fs::write(&patched, grown).unwrap();
+        assert!(same_aurie_base(&patched, &clean).unwrap_err().contains(".text"));
+
+        // .aurie somewhere other than the end
+        let swapped: &[(&[u8; 8], u32)] =
+            &[(b".text\0\0\0", 0x400), (b".aurie\0\0", 0x200), (b".data\0\0\0", 0x200)];
+        std::fs::write(&patched, synthetic_pe(swapped)).unwrap();
+        assert!(same_aurie_base(&patched, &clean).is_err());
+
+        // a backup that is itself patched can never be the clean base
+        std::fs::write(&patched, synthetic_pe(PATCHED)).unwrap();
+        std::fs::write(&clean, synthetic_pe(PATCHED)).unwrap();
+        assert!(same_aurie_base(&patched, &clean).is_err());
+
+        // and a file that is not a PE is reported, not panicked over
+        std::fs::write(&clean, b"not a program").unwrap();
+        assert!(same_aurie_base(&patched, &clean).is_err());
+    }
+
+    #[test]
+    fn the_backup_is_verified_and_a_stale_one_is_set_aside_not_overwritten() {
+        let dir = scratch("backup");
+        let exe = dir.join("Hero_Siege.exe");
+        let backup = dir.join("Hero_Siege.exe.aurie_backup");
+        std::fs::write(&exe, synthetic_pe(CLEAN)).unwrap();
+        assert_eq!(prepare_backup(&exe, &backup), Ok(true));
+        assert!(same_contents(&exe, &backup));
+        assert_eq!(prepare_backup(&exe, &backup), Ok(false), "a matching backup is kept as is");
+
+        // the game updated: the old backup must survive under another name
+        let updated: &[(&[u8; 8], u32)] = &[(b".text\0\0\0", 0x600), (b".data\0\0\0", 0x200)];
+        std::fs::write(&exe, synthetic_pe(updated)).unwrap();
+        assert_eq!(prepare_backup(&exe, &backup), Ok(true));
+        assert!(same_contents(&exe, &backup));
+        let stale = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().contains(".stale_"))
+            .count();
+        assert_eq!(stale, 1);
+
+        // a patched executable is never the source of a "clean" backup
+        std::fs::write(&exe, synthetic_pe(PATCHED)).unwrap();
+        assert!(prepare_backup(&exe, &backup).is_err());
+        assert!(!exe_is_patched(&backup), "the backup stayed clean");
+
+        // the rollback path: the backup replaces the patched file, verified
+        assert_eq!(verified_copy(&backup, &exe), Ok(()));
+        assert!(!exe_is_patched(&exe));
+        assert!(!dir.join("Hero_Siege.exe.part").exists());
+    }
+
+    #[test]
+    fn same_contents_compares_bytes_not_names() {
+        let dir = scratch("same");
+        let a = dir.join("a.bin");
+        let b = dir.join("b.bin");
+        let c = dir.join("c.bin");
+        let big: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&a, &big).unwrap();
+        std::fs::write(&b, &big).unwrap();
+        let mut other = big.clone();
+        other[2_999_999] ^= 1;
+        std::fs::write(&c, &other).unwrap();
+        assert!(same_contents(&a, &b));
+        assert!(!same_contents(&a, &c));
+        assert!(!same_contents(&a, &dir.join("missing")));
+        assert_eq!(place(&a, &b), Ok(false), "identical bytes are left alone");
+        assert_eq!(place(&a, &c), Ok(true));
+        assert!(same_contents(&a, &c));
+    }
+
+    /// Against a real patched game and its backup, when the paths are given:
+    /// `HSOT_REAL_EXE` and `HSOT_REAL_BACKUP`.
+    #[test]
+    #[ignore]
+    fn a_real_patched_game_matches_its_backup() {
+        let exe = PathBuf::from(std::env::var("HSOT_REAL_EXE").expect("HSOT_REAL_EXE"));
+        let backup = PathBuf::from(std::env::var("HSOT_REAL_BACKUP").expect("HSOT_REAL_BACKUP"));
+        assert!(exe_is_patched(&exe));
+        assert!(!exe_is_patched(&backup));
+        assert_eq!(same_aurie_base(&exe, &backup), Ok(()));
     }
 }

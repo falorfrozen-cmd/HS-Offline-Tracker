@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "HS Offline Tracker",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "identifier": "io.falorfrozen.hsofflinetracker",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -63,12 +63,16 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
-    "resources": [
-      "../LICENSE",
-      "../THIRD_PARTY_NOTICES.md",
-      "../PROTOCOL.md",
-      "../aurie-producer/build/bin/Release/HSOfflineTrackerProducer.dll"
-    ],
+    "resources": {
+      "../LICENSE": "LICENSE",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "../PROTOCOL.md": "PROTOCOL.md",
+      "../aurie-producer/build/bin/Release/HSOfflineTrackerProducer.dll": "producer/HSOfflineTrackerProducer.dll",
+      "../aurie-loader/AurieCore.dll": "aurie-loader/AurieCore.dll",
+      "../aurie-loader/YYToolkit.dll": "aurie-loader/YYToolkit.dll",
+      "../aurie-loader/AuriePatcher.exe": "aurie-loader/AuriePatcher.exe",
+      "../aurie-loader/yytoolkit-modified/NOTICE.md": "aurie-loader/yytoolkit-modified/NOTICE.md"
+    },
     "licenseFile": "../LICENSE",
     "shortDescription": "Offline Hero Siege loot journal and overlay",
     "longDescription": "An offline-first session journal for Hero Siege with configurable drop alerts, original visual effects, custom sounds, run history and an always-on-top overlay. It has no automatic telemetry or uploads.",

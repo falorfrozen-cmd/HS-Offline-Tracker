@@ -78,13 +78,25 @@ save tuple proves the mapping.
 Instant gold, XP, kills, rare drops, the current room and the satanic zone with
 its modifiers come from the Aurie producer module
 (`aurie-producer`). Open **Settings > Game link** and press **Install live
-sensor**: the tracker copies `HSOfflineTrackerProducer.dll` into the game's
-`mods/aurie` folder (the Aurie/YYToolkit loader must already be there). The
-sensor resolves the game's routines by name, so it keeps working after game
-updates; the status line on that page says whether the game is seen, the
-sensor is installed and events are flowing. Live magic find is not read yet:
-the game's stat routines cannot be hooked safely on the current build, so the
-panel leaves it out.
+sensor** with the game closed. The tracker works on its own: when the game does
+not carry the Aurie/YYToolkit mod loader yet, the same button sets it up first —
+`AurieCore.dll` beside the game, `YYToolkit.dll` in `mods/aurie`, and
+`Hero_Siege.exe` patched by `AuriePatcher.exe` after a verified clean copy is
+kept as `Hero_Siege.exe.aurie_backup` (the patch is rolled back from that copy
+if the result is not exactly the clean file plus the `.aurie` section). Then it
+copies `HSOfflineTrackerProducer.dll` into `mods/aurie`. ForgePact users
+already have the loader, so only the sensor is copied. If the game has never run
+beside the tracker, **Pick Hero_Siege.exe…** tells it where the game is. Meant
+for offline copies: on a live Steam install EasyAntiCheat relaunches the clean
+executable, so the sensor never loads there (the page says so when it sees EAC
+files), and the backup reverts the patch either way. The loader files ship in
+`aurie-loader/` (AGPL-3.0, see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
+
+The sensor resolves the game's routines by name, so it keeps working after game
+updates; the status lines on that page say whether the game is seen, the loader
+is in place, the sensor is installed and events are flowing. Live magic find is
+not read yet: the game's stat routines cannot be hooked safely on the current
+build, so the panel leaves it out.
 
 The dashboard's right column shows the zone, the satanic zone's pros and cons
 (names and wording from the game's own translation table; buff magnitudes as

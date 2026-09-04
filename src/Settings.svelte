@@ -49,10 +49,22 @@
     installing = false;
     invoke('producer_status').then((p) => (producer = p)).catch(() => {});
   }
+  // For a player whose game never ran beside the tracker: point at the exe.
+  async function pickGame() {
+    installNotice = '';
+    try {
+      const dir = await invoke('pick_game_exe');
+      if (dir) installNotice = `Game folder set to ${dir}`;
+    } catch (e) {
+      installNotice = String(e);
+    }
+    invoke('producer_status').then((p) => (producer = p)).catch(() => {});
+  }
   let sensorLine = $derived.by(() => {
     if (!producer) return 'checking…';
-    if (!producer.game_dir) return 'game not seen yet — start Hero Siege once';
-    if (!producer.aurie) return 'Aurie mod loader missing in the game folder';
+    if (!producer.game_dir) return 'game not seen yet — start Hero Siege once, or pick Hero_Siege.exe';
+    if (!producer.exe_present) return 'Hero_Siege.exe is not in that folder — pick it again';
+    if (!producer.loader_ready) return producer.installed ? 'sensor copied, but the Aurie mod loader is missing — Install sets it up' : 'mod loader and sensor not installed';
     if (!producer.installed) return 'sensor not installed';
     if (producer.pipe_up) return 'live — the game is sending events';
     if (producer.game_up) return producer.installed_current ? 'installed — waiting for the game to load it' : 'installed (older copy) — restart the game after updating';
@@ -188,6 +200,12 @@
       </span>
     </div>
     <div class="line" data-tauri-drag-region>
+      <span class="name">Mod loader</span>
+      <span class="opt" class:ok={producer?.loader_ready} class:muted={!producer?.loader_ready}>
+        {#if !producer?.game_dir}—{:else if producer.loader_ready}Aurie ready{:else}missing (AurieCore {producer.aurie ? '✓' : '✗'}, YYToolkit {producer.yytk ? '✓' : '✗'}, exe patched {producer.patched ? '✓' : '✗'}) — Install sets it up{/if}
+      </span>
+    </div>
+    <div class="line" data-tauri-drag-region>
       <span class="name">Live sensor</span>
       <span class="opt" class:ok={producer?.pipe_up} class:muted={!producer?.installed}>{sensorLine}</span>
     </div>
@@ -197,14 +215,25 @@
         style:--btn="url({art('button')})"
         style:--btn-hover="url({art('button_hover')})"
         style:--btn-down="url({art('button_down')})"
-        disabled={installing || !producer?.bundled || !producer?.game_dir}
+        disabled={installing || !producer?.bundled || !producer?.game_dir || producer?.game_up || (!producer?.loader_ready && !producer?.loader_bundled)}
         onclick={installSensor}
-        title="Copies HSOfflineTrackerProducer.dll into the game's mods\aurie folder. Nothing in the game is modified."
-      >{producer?.installed ? (producer?.installed_current ? 'Reinstall live sensor' : 'Update live sensor') : 'Install live sensor'}</button>
+        title="Sets up the Aurie/YYToolkit mod loader when the game does not have it (AurieCore.dll beside the game, YYToolkit.dll in mods\aurie, Hero_Siege.exe patched; a clean copy is kept as Hero_Siege.exe.aurie_backup), then copies HSOfflineTrackerProducer.dll into mods\aurie."
+      >{installing ? 'Installing…' : !producer?.loader_ready ? 'Install mod loader + live sensor' : producer?.installed ? (producer?.installed_current ? 'Reinstall live sensor' : 'Update live sensor') : 'Install live sensor'}</button>
+      <button
+        class="btn"
+        style:--btn="url({art('button')})"
+        style:--btn-hover="url({art('button_hover')})"
+        style:--btn-down="url({art('button_down')})"
+        disabled={installing}
+        onclick={pickGame}
+        title="Choose Hero_Siege.exe by hand when the game has not run beside the tracker yet."
+      >Pick Hero_Siege.exe…</button>
+      {#if producer?.game_up}<span class="opt muted">close the game to install</span>{/if}
+      {#if producer?.eac && !producer?.loader_ready}<span class="opt muted">EAC files present: fine on an offline copy, but a live Steam/EAC install will not load the sensor</span>{/if}
       {#if installNotice}<span class="opt">{installNotice}</span>{/if}
     </div>
     <div class="hint" data-tauri-drag-region>
-      The sensor resolves the game's routines by name, so it keeps working across game updates. It reads gold, XP, kills, rare drops, the room and the satanic zone; it never writes to the game.
+      Works without ForgePact: the first install also sets up the Aurie/YYToolkit mod loader, keeping a clean copy of the game executable as Hero_Siege.exe.aurie_backup. ForgePact users already have the loader, so only the sensor is copied. Meant for offline copies (a live Steam install with EasyAntiCheat active relaunches the clean executable, so the sensor never loads there); close the game before installing. The sensor resolves the game's routines by name, so it keeps working across game updates. It reads gold, XP, kills, rare drops, the room and the satanic zone; it never writes to the game.
     </div>
   </div>
   {#if settings && session}

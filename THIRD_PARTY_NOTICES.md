@@ -61,6 +61,37 @@ That file contains the complete BSD 2-Clause notices for MinHook and its
 HDE32/HDE64 disassembly code and must accompany any distribution of the sensor
 binary.
 
+## Aurie Framework
+
+The Windows installer and the release archive ship the Aurie mod loader so the
+live sensor can be installed without any other tool (`aurie-loader/`):
+
+- Project: Aurie Framework
+- Upstream repository: <https://github.com/AurieFramework/Aurie>
+- License: AGPL-3.0
+- Files: `AurieCore.dll`, `AuriePatcher.exe` — **unmodified** builds of the
+  upstream project; their corresponding source is the repository above.
+
+They are placed next to the game only when the user presses **Install live
+sensor** in Settings. A clean copy of the game executable is kept as
+`Hero_Siege.exe.aurie_backup`.
+
+## YYToolkit (YYTK)
+
+- Project: YYToolkit
+- Upstream repository: <https://github.com/AurieFramework/YYToolkit>
+- License: AGPL-3.0
+- File: `YYToolkit.dll` — built from YYToolkit with **two modified source
+  files** (a startup-time disk cache for the runner-interface lookup, and the
+  `ExecuteIt` hook left uninstalled). The modified files and the build notes
+  are in [aurie-loader/yytoolkit-modified/](aurie-loader/yytoolkit-modified/),
+  which together with the upstream repository form the corresponding source.
+
+The live sensor (`aurie-producer`) links against the Aurie and YYToolkit
+headers. Both the sensor and the loader files are separate binaries from the
+tracker application; the tracker itself neither links nor loads them, it copies
+them into the game's folder on request.
+
 ## Game names and metadata
 
 Hero Siege names, terminology and game metadata remain the property of their respective owner, Panic Art Studios. Their use is descriptive and for interoperability. HS Offline Tracker is an independent, unofficial project and is not endorsed by Panic Art Studios.
