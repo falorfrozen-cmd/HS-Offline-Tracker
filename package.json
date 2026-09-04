@@ -1,6 +1,6 @@
 {
   "name": "hs-offline-tracker",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local-event Hero Siege loot journal, alert engine and overlay for offline play.",
   "private": true,
   "license": "MIT",

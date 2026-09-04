@@ -6,10 +6,18 @@ protocol and bounded named-pipe transport.
 
 The module does not patch the executable on disk. Aurie loads it into the game
 process; YYToolkit resolves named GML routines and Aurie's owned hooks observe
-their calls. The producer refuses to create any hook unless the host executable
-matches the embedded PE machine, timestamp, `.text` raw size and complete
-`.text` SHA-256 exactly. Aurie's own non-code section can legitimately change,
-so full-file size/SHA-256 are retained as status diagnostics, not gate inputs.
+their calls. Every route is resolved by its GML routine name through YYToolkit, so the
+producer keeps working across game updates. When the host executable matches
+one of the reviewed exact profiles (PE machine, timestamp, `.text` size and
+`.text` SHA-256) that profile's reviewed argument layout and caller allowlist
+are used. Any other x64 Hero Siege build gets the **adaptive profile**: the
+same routines by name, the earned-gold argument found at call time (the
+positive integral argument, the second one on a tie), and the ground-item route
+guarded by hooking the player-discard and API reconstruction routines plus a
+1.5 s quiet window after every room change instead of caller RVAs. The build
+fingerprint is still reported in `bridge_status` (`exact_build_ready` or
+`adaptive_build_ready`) as a diagnostic. A route whose name no longer resolves
+is dropped on its own; only the three counter routes are mandatory.
 
 ## Current counter contract
 
@@ -52,6 +60,19 @@ write I/O on its own bounded worker thread. No serialization, allocation, pipe
 I/O or blocking lock runs inside a game hook. Release builds do not install a
 Magic Find observer or collect per-event diagnostic/timing counters. A full
 queue fails open to protect gameplay and reports its skipped count once at unload.
+
+- `gml_Script_RoomGoto`: after the original returns, argument 0 (the target
+  room) becomes a `room` event via `room_get_name`. The same hook reads
+  `global.satanicZoneBuff` / `global.satanicZoneDebuff` and asks the game's own
+  `LoadSatanicZone(room)` for every candidate in `global.satanicZone`; the one
+  room it answers yes for is emitted as `satanic_zone` (`Satanic_<act>_<zone>`)
+  together with `vitals.satanic_here`. This is the one hook that allocates,
+  because a room change is rare and the routine it wraps already does.
+- Magic find: switched off (`kMagicFindRouteNamed.enabled = false`). StatMagicFind
+  takes nine arguments and returns a carry array; which element the character
+  sheet prints is unsettled, and the sheet's own dispatcher, ReturnSpecificStat,
+  could not be hooked without crashing 7.0.6.0 at startup. The hook code stays in
+  place for a future build.
 
 ## Build
 

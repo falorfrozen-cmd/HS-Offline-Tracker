@@ -30,24 +30,31 @@ const ICONS = {
 const icon = (name) => ICONS[name] ?? glyph('✦');
 const defaultBuffIcon = glyph('✦', '#ad72ff');
 
+// Magnitudes: the game keeps the numeric part of a satanic buff in protected
+// values (ReturnSatanicZoneBuffs reads gDataProtected[0xcd..0xe3]); the ones
+// below were read live on 2026-09-04 (Hero Siege 7.0.6.0): Rune Master 15+5,
+// Gold Hunger 40+8.75, Heroic 3+3, Angelic 4+6, Goblin's Greed 0.5, Artifact
+// Digger 155+5, Seeker 210+10, Excavator 370+20, Recruit 10+2.5, Combat
+// Training 15+3.75, Battle Scarred 20+5. Re-read them after a balance patch
+// with NetProbe: `gpv 205` .. `gpv 227`.
 // id → [name, description]; order matches the game's buff ids
 const BUFFS = {
   1: ['Loot Goblin I', '+1 Maximum Loot from Enemy Killed', 'sz_buff_loot'],
   2: ['Loot Goblin II', '+2 Maximum Loot from Enemy Killed', 'sz_buff_loot'],
-  3: ['Rune Master', '15% + (2.5% per sub difficulty level) Increased Rune Drop Chance', 'sz_buff_runes'],
+  3: ['Rune Master', 'Rune Drop Chance increased by 15% + (5% per sub difficulty level)', 'sz_buff_runes'],
   4: ['Gold Hunger', 'Gold from monster kills increased by 40% + (8.75% per sub difficulty level)', 'sz_buff_gold'],
   5: ['Heroic Windfall', 'Heroic Item drop chances increased by 3% + (3% per sub difficulty level)', 'sz_buff_heroic'],
-  6: ['Angelic Fortune', 'Angelic Item drop chances increased by 25% + (7.5% per sub difficulty level)', 'sz_buff_angelic'],
-  7: ["Zephy's Grace", 'Movement Speed increased by 50%', 'sz_buff_zephy'],
+  6: ['Angelic Fortune', 'Angelic Item drop chances increased by 4% + (6% per sub difficulty level)', 'sz_buff_angelic'],
+  7: ['Zephy’s Grace', 'Movement Speed increased by 50%', 'sz_buff_zephy'],
   8: ['Fury of Tempest', 'Attack Speed increased by 60%', 'sz_buff_fury_of_tempest'],
   9: ['Rapid Casting', 'Faster Cast Rate increased by 60%', 'sz_buff_cast_rate'],
   10: ['Onslaught', 'Attack Damage increased by 100%', 'sz_buff_onslaught'],
   11: ['Nether Surge', 'Magic Skill Damage increased by 40%', 'sz_buff_nether_surge'],
-  12: ['Relic Keepers', 'Ancient monsters have a 2% chance to drop a relic on death', 'sz_buff_relics'],
-  13: ["Goblin's Greed", 'Champion+ monsters have a 0.5% chance to summon a Treasure Goblin on death', 'sz_buff_goblin'],
-  14: ['Artifact Digger', '+55% Magic Find + (5% per sub difficulty level)', 'sz_buff_mf'],
-  15: ['Artifact Seeker', '+110% Magic Find + (10% per sub difficulty level)', 'sz_buff_mf'],
-  16: ['Artifact Excavator', '+170% Magic Find + (20% per sub difficulty level)', 'sz_buff_mf'],
+  12: ['Relic Keepers', 'Ancient monsters have a chance to drop a relic on death', 'sz_buff_relics'],
+  13: ['Goblin’s Greed', 'Champion+ monsters have a 0.5% chance to summon a Treasure Goblin on death', 'sz_buff_goblin'],
+  14: ['Artifact Digger', 'Magic Find increased by 155% + (5% per sub difficulty level)', 'sz_buff_mf'],
+  15: ['Artifact Seeker', 'Magic Find increased by 210% + (10% per sub difficulty level)', 'sz_buff_mf'],
+  16: ['Artifact Excavator', 'Magic Find increased by 370% + (20% per sub difficulty level)', 'sz_buff_mf'],
   17: ['Recruit', '+10% Experience Gain + (2.5% per sub difficulty level)', 'sz_buff_combat_training'],
   18: ['Combat Training', '+15% Experience Gain + (3.75% per sub difficulty level)', 'sz_buff_combat_training'],
   19: ['Battle Scarred', '+20% Experience Gain + (5% per sub difficulty level)', 'sz_buff_combat_training'],
@@ -70,36 +77,39 @@ const BUFFS = {
 //
 // The order is the game's `satanicDebuff*` rows, which is also the order of the
 // case bodies in its own map screen: id N is the Nth entry.
+// Names and wording straight from the game's translation table
+// (translationsAttributes.csv: satanicDebuff* for the name, debuff_* for the
+// effect), in the game's own key order: id N is the Nth entry. No magnitudes:
+// the game hands those to BuffAdd from a table of its own, and the numbers
+// once written here by hand had drifted from it (Absolute Limbo said 50 while
+// the game said 25).
 const DEBUFFS_LIST = [
-  ["Dusk's Shroud", 'Light Radius decreased by 20%'],
-  ['Elemental Erosion', 'All Resistances decreased by 75%'],
-  ['Sundered Armor', 'Damage Taken increased by 25%'],
-  ['Vitality Drain', 'Life decreased by 25%'],
-  ['Essence Drain', 'Mana decreased by 25%'],
-  ['Abyssal Gloom', 'Darkness increased by 100%'],
-  ['Skill Debilitation', 'All Skills decreased by 10%'],
-  ['Weakening Essence', 'All Attributes decreased by 20%'],
-  // The game ships no description for any of these — every line here was
-  // written by hand from the map screen — and this one has not been read off it
-  // yet, so it says only what the game's own name for it says.
-  ['Lifeflow Starvation', 'Regeneration reduced'],
-  ['Sanguine Impairment', 'Life Steal decreased by 75%'],
-  ['Arcane Impairment', 'Mana Steal decreased by 75%'],
-  ['Consumed Time', 'Cooldown Recovery decreased by 25%'],
-  ['Absolute Limbo', 'Cooldown Recovery decreased by 50%'],
-  ['Boulder Fall', 'Monsters have a 3% chance to drop a boulder from the sky on death'],
-  ['Lingering Evil', 'Movement Speed reduced by 25%'],
-  ['Fatal Wounds', 'Monsters gain a 10% chance to inflict 2x damage'],
-  ['Bloated Veins', 'Monsters have 70% increased Life'],
-  ['Abnormal Dwelling', 'Monsters have 130% increased Life'],
-  ['Colossal Bloating', 'Monsters have 200% increased Life'],
-  ['Necrosis', 'Your life is drained by 1% every second'],
-  ['Venomous Presence', 'Poison Duration is increased by 200%'],
-  ['Flaming Agony', 'Monsters unleash a Fire Nova on death dealing 50% of their damage'],
-  ['Unholy Agility', 'Monsters gain increased movement and attack speed'],
-  ['Broken Armor', 'You are unable to block attacks and projectiles'],
-  ['Hemorrhage', 'Monster attacks inflict a 4 second stacking bleed for 10% of their damage'],
-  ['Crippling Slow', 'Monster attacks inflict a 50% slow that lasts 2 seconds'],
+  ['Dusk\u2019s Shroud', 'Light Radius decreased'],
+  ['Elemental Erosion', 'All Resistances decreased'],
+  ['Sundered Armor', 'Damage Taken increased'],
+  ['Vitality Drain', 'Life decreased'],
+  ['Essence Drain', 'Mana decreased'],
+  ['Abyssal Gloom', 'Darkness increased'],
+  ['Skill Debilitation', 'All Skills decreased'],
+  ['Weakening Essence', 'All Attributes decreased'],
+  ['Lifeflow Starvation', 'Life and Mana replenish decreased'],
+  ['Sanguine Impairment', 'Life Steal decreased'],
+  ['Arcane Impairment', 'Mana Steal decreased'],
+  ['Consumed Time', 'Cooldown Recovery reduced'],
+  ['Absolute Limbo', 'Cooldown Recovery reduced (the stronger tier)'],
+  ['Boulder Fall', 'Monsters have a chance to drop a boulder from the sky when killed'],
+  ['Lingering Evil', 'Movement Speed decreased'],
+  ['Fatal Wounds', 'Monster Critical Strike Damage increased'],
+  ['Bloated Veins', 'Monster life increased'],
+  ['Abnormal Dwelling', 'Monster life increased (the stronger tier)'],
+  ['Colossal Bloating', 'Monster life increased (the strongest tier)'],
+  ['Necrosis', 'Life drained every second'],
+  ['Venomous Presence', 'Poison Length increased'],
+  ['Flaming Agony', 'Monsters unleash a Fire Nova when killed'],
+  ['Unholy Agility', 'Monster Movement Speed and Attack Speed increased'],
+  ['Broken Armor', 'Block Rating reduced'],
+  ['Hemorrhage', 'Monster attacks inflict a bleed that stacks 20 times'],
+  ['Crippling Slow', 'Monster attacks inflict a slow for 2 seconds'],
 ];
 
 export function debuffInfo(id) {

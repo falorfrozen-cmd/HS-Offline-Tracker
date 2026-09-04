@@ -58,6 +58,12 @@ dist-linux/
 # machine-specific paths; see .env.example
 .env
 
+# Machine-local build preference: this checkout lives in OneDrive, so cargo
+# is pointed at a target directory outside it. The path is personal, and a
+# clone builds fine without it.
+.cargo/
+src-tauri/.cargo/
+
 # artifacts gathered by `npm run all`
 release/
 

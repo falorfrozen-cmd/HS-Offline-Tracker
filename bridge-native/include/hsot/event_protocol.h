@@ -51,7 +51,26 @@ struct SessionDeltaEvent {
 struct VitalsEvent {
     EventEnvelope envelope;
     double magic_find{};
+    // A zone change may know where the character is before any magic find
+    // reading exists; the field is then left out rather than sent as zero.
+    bool omit_magic_find{};
+    std::optional<bool> satanic_here;
     std::string source;
+};
+
+// Where the character is standing, exactly as the game names the room.
+struct RoomEvent {
+    EventEnvelope envelope;
+    std::string room;
+};
+
+// The active satanic zone and its rolled modifiers. Identifiers are the
+// game's own buff/debuff ids and must fit in a byte.
+struct SatanicZoneEvent {
+    EventEnvelope envelope;
+    std::string zone;
+    std::vector<std::uint8_t> buffs;
+    std::vector<std::uint8_t> debuffs;
 };
 
 // Monotonic counters used to validate a candidate sensor against persisted
@@ -113,6 +132,8 @@ struct GroundDropEvent {
 [[nodiscard]] std::string SerializeNdjson(const StatusEvent& event);
 [[nodiscard]] std::string SerializeNdjson(const SessionDeltaEvent& event);
 [[nodiscard]] std::string SerializeNdjson(const VitalsEvent& event);
+[[nodiscard]] std::string SerializeNdjson(const RoomEvent& event);
+[[nodiscard]] std::string SerializeNdjson(const SatanicZoneEvent& event);
 [[nodiscard]] std::string SerializeNdjson(const SensorDiagnosticEvent& event);
 [[nodiscard]] std::string SerializeNdjson(const GroundDropEvent& event);
 

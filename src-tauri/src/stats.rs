@@ -304,6 +304,10 @@ pub struct GameStats {
     /// the current one has been counting
     zone_time: HashMap<String, u64>,
     room_since: Option<Instant>,
+    /// when the game last named the room. A live sensor names it on every
+    /// change; a save only says which act, and an old save must not outrank
+    /// a room heard seconds ago.
+    room_at: Option<Instant>,
     /// A paused session keeps its counters and stops its clock. `paused_at` is
     /// when it stopped — back-dated when the pause was the app noticing that
     /// nothing had happened for a while, so the idle minutes do not count as
@@ -526,6 +530,7 @@ impl Default for GameStats {
             started_ms: now_ms(),
             zone_time: HashMap::new(),
             room_since: None,
+            room_at: None,
             paused_at: None,
             paused_total: Duration::ZERO,
             by_hand: false,
@@ -1516,7 +1521,14 @@ impl GameStats {
                 // zone again. A room whose name says nothing about an act, the
                 // Shadow Realm and its like, is left where it is: there is
                 // nothing to contradict it with.
-                if let (Some(room), true) = (self.room.as_deref(), *act > 0) {
+                //
+                // With the live sensor the room arrives on every change, so a
+                // room heard in the last few minutes is the fresher of the two
+                // and the save's act yields to it instead.
+                let room_is_fresh = self
+                    .room_at
+                    .is_some_and(|at| at.elapsed() < Duration::from_secs(600));
+                if let (Some(room), true, false) = (self.room.as_deref(), *act > 0, room_is_fresh) {
                     if matches!(act_of_room(room), Some(was) if was != *act) {
                         self.bank_room_time();
                         self.room = None;
@@ -1618,7 +1630,14 @@ impl GameStats {
                         self.room_since = Some(Instant::now());
                     }
                     self.room = Some(room.clone());
+                    // The room names its act; keep the two from disagreeing
+                    // until the next save catches up.
+                    if let Some(act) = act_of_room(room) {
+                        self.act = act;
+                    }
+                    self.revision += 1;
                 }
+                self.room_at = Some(Instant::now());
             }
             GameEvent::Vitals {
                 mf,
@@ -2454,7 +2473,15 @@ mod tests {
         s.apply(&GameEvent::Room("Act_08_02".into()));
         assert_eq!(s.snapshot(String::new()).room.as_deref(), Some("Act_08_02"));
 
-        // the save moves on; the room it belonged to does not survive it
+        // a room heard moments ago is fresher than any save: it stays, and it
+        // is the room that says which act the character is in
+        s.apply(&in_act(6));
+        let snap = s.snapshot(String::new());
+        assert_eq!(snap.room.as_deref(), Some("Act_08_02"), "a fresh room outranks the save");
+
+        // once the room has gone quiet the save moves on; the room it belonged
+        // to does not survive it
+        s.room_at = Some(Instant::now() - Duration::from_secs(900));
         s.apply(&in_act(6));
         let snap = s.snapshot(String::new());
         assert_eq!(snap.room, None, "the room was in act 8");
@@ -2462,6 +2489,7 @@ mod tests {
 
         // a town belongs to its act too
         s.apply(&GameEvent::Room("Town_06_rm".into()));
+        s.room_at = Some(Instant::now() - Duration::from_secs(900));
         s.apply(&in_act(2));
         assert_eq!(
             s.snapshot(String::new()).room,

@@ -41,6 +41,14 @@ int main(const int argument_count, const char* arguments[]) {
     REQUIRE(hsot::aurie::kCounterRoutesLegacy[0].value_argument_index == 0);
     REQUIRE(hsot::aurie::kCounterRoutesCurrent[0].value_argument_index == 1);
     REQUIRE(hsot::aurie::kGroundDropRouteCurrent.enabled);
+    REQUIRE(hsot::aurie::kGroundDropRouteCurrent.caller_allowlist);
+    REQUIRE(hsot::aurie::kAdaptiveProfile.adaptive);
+    REQUIRE(hsot::aurie::kAdaptiveProfile.drop_route.enabled);
+    REQUIRE(!hsot::aurie::kAdaptiveProfile.drop_route.caller_allowlist);
+    REQUIRE(hsot::aurie::kAdaptiveProfile.routes[0].value_argument_index == -1);
+    REQUIRE(hsot::aurie::kAdaptiveProfile.room_route.enabled);
+    REQUIRE(hsot::aurie::kAdaptiveProfile.magic_find_route.routine_name ==
+        "gml_Script_StatMagicFind");
     REQUIRE(hsot::aurie::kGroundDropRouteCurrent.routine_name ==
         "gml_Script_LootGroundInit");
     REQUIRE(hsot::aurie::IsGroundItemCreateCallerRva(
@@ -90,10 +98,15 @@ int main(const int argument_count, const char* arguments[]) {
     REQUIRE(current.drop_route.enabled);
     REQUIRE(current.drop_route.routine_name ==
         "gml_Script_LootGroundInit");
+    // Room and magic-find sensing resolve by name on every profile.
     REQUIRE(!legacy.magic_find_route.enabled);
     REQUIRE(!current.magic_find_route.enabled);
-    REQUIRE(current.magic_find_route.routine_name.empty());
-    REQUIRE(current.magic_find_route.hook_id.empty());
+    REQUIRE(current.magic_find_route.routine_name == "gml_Script_StatMagicFind");
+    REQUIRE(!current.magic_find_route.hook_id.empty());
+    REQUIRE(legacy.room_route.enabled);
+    REQUIRE(current.room_route.routine_name == "gml_Script_RoomGoto");
+    REQUIRE(!legacy.adaptive);
+    REQUIRE(!current.adaptive);
 
     for (const auto& profile : hsot::aurie::kSupportedProfiles) {
         const auto expected = ExpectedFingerprint(profile);

@@ -2,7 +2,8 @@
   import { invoke } from './bridge.js';
   import { art } from './skin.svelte.js';
   import { listen } from './bridge.js';
-  import { itemName, rarityByName, tierLabel, typeLabel } from './items.js';
+  import { itemName, rarityByName, tierLabel, typeLabel, roomName, zoneLabel, zoneCode, DROP_ZONES, DROP_CHASE, DROP_RATE, RARITY_BY_NAME, TIER_BY_NAME, TIER_LETTERS } from './items.js';
+  import { buffInfo, debuffInfo, zoneName } from './buffs.js';
   import { fmt, difficulty, RARITIES, RARITY_CLASS } from './format.js';
 
   let snap = $state(null);
@@ -181,6 +182,67 @@
     addedTimer = setTimeout(() => (added = null), 2500);
   }
 
+  // ---- the right column: where the character is and what that place offers
+  let room = $derived(snap?.room ?? null);
+  let roomTitle = $derived(room ? (roomName(room) ?? zoneLabel(room)) : (snap?.act ? `Act ${snap.act}` : 'unknown'));
+  let roomSub = $derived.by(() => {
+    const m = /^Act_(\d+)_(\d+)/i.exec(String(room ?? ''));
+    if (m) return `Act ${Number(m[1])} · Zone ${Number(m[2])}`;
+    if (/^Town/i.test(String(room ?? ''))) return 'town';
+    return room ? String(room).replace(/_rm$/i, '') : 'waiting for the game';
+  });
+  let sz = $derived(snap?.satanic_zone ?? null);
+  let szHere = $derived.by(() => {
+    if (snap?.satanic_here) return true;
+    const a = zoneCode(sz?.zone);
+    const b = zoneCode(room);
+    return !!a && a === b;
+  });
+  let szAgo = $derived.by(() => {
+    const at = snap?.satanic_at;
+    if (!at) return '';
+    const mins = Math.max(0, Math.floor((nowTick - at) / 60000));
+    return mins < 1 ? 'rotated just now' : `rotated ${mins}m ago`;
+  });
+  // The table's code for a room: "8-2" for act 8 zone 2, "8-D" for one of
+  // its dungeons, "8-BD" for its boss dungeon. Town and menus have none.
+  function areaCode(name) {
+    const text = String(name ?? '');
+    const zone = zoneCode(text);
+    if (zone) return zone;
+    const m = /^Act_(\d+)_/i.exec(text);
+    if (!m) return null;
+    if (/Boss/i.test(text)) return `${Number(m[1])}-BD`;
+    if (/Dungeon|Cave|Tomb|Crypt|Mine|Vault/i.test(text)) return `${Number(m[1])}-D`;
+    return null;
+  }
+  function itemsTiedTo(code) {
+    if (!code) return [];
+    const out = [];
+    for (const [name, zones] of Object.entries(DROP_ZONES)) {
+      if (!zones.includes(code)) continue;
+      const chase = DROP_CHASE[name] ?? DROP_RATE[name] ?? 0;
+      const rarity = RARITY_BY_NAME[name] ?? '';
+      const tier = TIER_BY_NAME[name] ?? 0;
+      out.push({ name, chase, rarity, tier });
+    }
+    out.sort((a, b) => (a.chase || 1e12) - (b.chase || 1e12));
+    return out.slice(0, 12);
+  }
+  // Items the game ties to where the character stands, best odds first. In
+  // town there is nothing to tie to, so the satanic zone's list stands in:
+  // that is the place the character is about to go.
+  let area = $derived.by(() => {
+    const here = itemsTiedTo(areaCode(room));
+    if (here.length) return { items: here, label: roomSub, from: 'here' };
+    const szCode = zoneCode(sz?.zone);
+    const there = itemsTiedTo(szCode);
+    if (there.length) return { items: there, label: `satanic zone · ${zoneName(sz.zone)}`, from: 'satanic' };
+    return { items: [], label: room ? roomSub : '', from: 'none' };
+  });
+  // word starts only: "tarethiel's" must not become "Tarethiel'S"
+  const cap = (t) => t.replace(/(^|[\s(])([a-z])/g, (m, a, c) => a + c.toUpperCase());
+  const tierName = (t) => (TIER_LETTERS && TIER_LETTERS[t]) ? TIER_LETTERS[t] : (t ? String(t) : '');
 </script>
 
 <div class="panel">
@@ -320,11 +382,94 @@
           {/each}
         </div>
       </div>
+
+      <div class="zone-col">
+      <div class="box" style:border-image-source="url({art('chip_dark')})">
+        <div class="box-head"><span class="accent">Zone</span><span class="right">{roomSub}</span></div>
+        <div class="zone-title" title={room ?? ''}>{roomTitle}</div>
+        <div class="vitals">
+          <span>Level <b>{extra?.character?.level ?? '—'}</b></span>
+          <span>Hero <b>{extra?.character?.herolevel ?? '—'}</b></span>
+        </div>
+      </div>
+
+      <div class="box" style:border-image-source="url({art('chip_dark')})">
+        <div class="box-head"><span class="accent c-sat">Satanic zone</span><span class="right">{szAgo}</span></div>
+        {#if sz}
+          <div class="zone-title" class:here={szHere}>{zoneName(sz.zone)}{#if szHere}<span class="badge here">you are here</span>{/if}</div>
+          <div class="mods">
+            <div class="mods-col">
+              <div class="subhead c-set">Pros</div>
+              {#each sz.buffs ?? [] as id}
+                {@const b = buffInfo(id)}
+                <div class="mod" title={b.desc}><img src={b.icon} alt="" /><div><div class="mod-name">{b.name}</div><div class="mod-desc">{b.desc}</div></div></div>
+              {/each}
+            </div>
+            <div class="mods-col">
+              <div class="subhead c-sat">Cons</div>
+              {#each sz.debuffs ?? [] as id}
+                {@const d = debuffInfo(id)}
+                <div class="mod" title={d.desc}><div><div class="mod-name">{d.name}</div><div class="mod-desc">{d.desc}</div></div></div>
+              {/each}
+            </div>
+          </div>
+        {:else}
+          <div class="dim small">Known once the game reports it — enter a zone with the live sensor installed.</div>
+        {/if}
+      </div>
+
+      <div class="box" style:border-image-source="url({art('chip_dark')})">
+        <div class="box-head"><span class="accent">{area.from === 'satanic' ? 'Drops in the satanic zone' : 'Drops in this area'}</span><span class="right">{area.label}</span></div>
+        {#if area.items.length}
+          <div class="area">
+            {#each area.items as d}
+              <div class="area-row">
+                <span class="area-name {rarityCls[d.rarity] ?? ''}" title={d.name}>{cap(d.name)}</span>
+                <span class="area-tier">{tierName(d.tier)}</span>
+                <span class="area-odds">{d.chase ? `1/${fmt(d.chase)}` : ''}</span>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="dim small">{room ? 'The item tables tie nothing to this room. Zones, dungeons and boss dungeons have lists.' : 'Waiting for the room.'}</div>
+        {/if}
+      </div>
+      </div>
     </div>
   </div>
 </div>
 
 <style>
+  .zone-col {
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-right: 2px;
+  }
+  .zone-col::-webkit-scrollbar { width: 6px; }
+  .zone-col::-webkit-scrollbar-thumb { background: var(--dim-1); border-radius: 3px; }
+  .zone-title { font-size: 15px; color: var(--bone-13); margin: 2px 0 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .zone-title.here { color: #ffd1d8; }
+  .badge.here { font-size: 9px; background: #5a1622; color: #ffd1d8; border-radius: 3px; padding: 1px 5px; text-transform: uppercase; letter-spacing: .4px; }
+  .vitals { display: flex; gap: 10px; font-size: 11px; color: var(--bone-4); flex-wrap: wrap; }
+  .vitals b { color: var(--bone-13); }
+  .mods { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .mods-col { min-width: 0; }
+  .mod { display: flex; gap: 5px; align-items: flex-start; margin: 2px 0 4px; min-width: 0; }
+  .mod img { width: 18px; height: 18px; flex: none; margin-top: 1px; }
+  .mod-name { font-size: 11px; color: var(--bone-13); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mod-desc { font-size: 9.5px; color: var(--bone-4); line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .area { display: flex; flex-direction: column; gap: 1px; }
+  .area-row { display: grid; grid-template-columns: minmax(0, 1fr) 24px 64px; gap: 6px; align-items: baseline; font-size: 11px; }
+  .area-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .area-tier { color: var(--bone-4); font-size: 10px; text-align: center; }
+  .area-odds { color: var(--bone-4); text-align: right; font-variant-numeric: tabular-nums; }
+  .small { font-size: 10px; }
+  .c-blue { color: #72b8ff; }
+
   @font-face {
     font-family: 'Offline Tracker UI';
     src: local('Segoe UI Semibold'), local('Segoe UI');
@@ -527,7 +672,7 @@
     flex: 1 1 auto;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+    grid-template-columns: minmax(250px, 300px) minmax(0, 1fr) minmax(250px, 300px);
     gap: 8px;
   }
 
@@ -562,10 +707,11 @@
     .run { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .workspace {
       grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: auto 320px;
+      grid-template-rows: auto 320px auto;
       overflow-y: auto;
       padding-right: 2px;
     }
+    .zone-col { min-height: auto; overflow: visible; padding-right: 0; }
     .summary-col {
       min-height: auto;
       overflow: visible;

@@ -112,7 +112,7 @@ sources count each kill once.
 {"protocol":"hs-offline-tracker/1","v":1,"kind":"vitals","magic_find":12840,"level":100,"hero_level":300,"satanic_here":true}
 ```
 
-`magic_find` and `satanic_here` are optional updates. Level fields default to zero when omitted.
+`magic_find` and `satanic_here` are optional updates. Level fields default to zero when omitted. The Aurie producer sends `magic_find` on its own line whenever the game recomputes it and `satanic_here` with every room change.
 
 ### Account, room and mail
 
@@ -131,6 +131,8 @@ Account identifiers should be local pseudonymous identifiers; do not place crede
 ```
 
 Buff and debuff identifiers must fit in an unsigned byte (`0` through `255`). Out-of-range and non-integer entries are discarded.
+
+The Aurie producer spells `zone` as `Satanic_<act>_<zone>` derived from the game's own room name (`Act_09_03` becomes `Satanic_9_3`) and fills `buffs`/`debuffs` from the game's `satanicZoneBuff` / `satanicZoneDebuff` arrays at every room change.
 
 ### Ground drop
 

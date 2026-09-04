@@ -24,6 +24,40 @@
   });
 
   let notice = $state('');
+
+  // The live sensor: the game seen, Aurie beside it, the sensor file in its
+  // mod folder, the pipe talking. Polled while this page is open, because the
+  // answer changes the moment the game starts or the file lands.
+  let producer = $state(null);
+  let installing = $state(false);
+  let installNotice = $state('');
+  $effect(() => {
+    let disposed = false;
+    const ask = () => invoke('producer_status').then((p) => { if (!disposed) producer = p; }).catch(() => {});
+    ask();
+    const t = setInterval(ask, 3000);
+    return () => { disposed = true; clearInterval(t); };
+  });
+  async function installSensor() {
+    installing = true;
+    installNotice = '';
+    try {
+      installNotice = await invoke('install_producer');
+    } catch (e) {
+      installNotice = String(e);
+    }
+    installing = false;
+    invoke('producer_status').then((p) => (producer = p)).catch(() => {});
+  }
+  let sensorLine = $derived.by(() => {
+    if (!producer) return 'checking…';
+    if (!producer.game_dir) return 'game not seen yet — start Hero Siege once';
+    if (!producer.aurie) return 'Aurie mod loader missing in the game folder';
+    if (!producer.installed) return 'sensor not installed';
+    if (producer.pipe_up) return 'live — the game is sending events';
+    if (producer.game_up) return producer.installed_current ? 'installed — waiting for the game to load it' : 'installed (older copy) — restart the game after updating';
+    return producer.installed_current ? 'installed — start the game' : 'installed (older copy) — update recommended';
+  });
   async function restart(x11) {
     // a pending edit would die with this process
     if (saveTimer) {
@@ -144,6 +178,35 @@
 
 <div class="panel">
   <div class="body">
+  <div class="section" style:border-image-source="url({art('chip_dark')})">
+    <div class="sechead" data-tauri-drag-region>Game link</div>
+    <div class="line" data-tauri-drag-region>
+      <span class="name">Game</span>
+      <span class="opt" title={producer?.game_exe ?? ''}>
+        {producer?.game_dir ? producer.game_dir : 'not seen yet'}
+        {#if producer?.game_up}<b class="ok"> · running</b>{/if}
+      </span>
+    </div>
+    <div class="line" data-tauri-drag-region>
+      <span class="name">Live sensor</span>
+      <span class="opt" class:ok={producer?.pipe_up} class:muted={!producer?.installed}>{sensorLine}</span>
+    </div>
+    <div class="line">
+      <button
+        class="btn"
+        style:--btn="url({art('button')})"
+        style:--btn-hover="url({art('button_hover')})"
+        style:--btn-down="url({art('button_down')})"
+        disabled={installing || !producer?.bundled || !producer?.game_dir}
+        onclick={installSensor}
+        title="Copies HSOfflineTrackerProducer.dll into the game's mods\aurie folder. Nothing in the game is modified."
+      >{producer?.installed ? (producer?.installed_current ? 'Reinstall live sensor' : 'Update live sensor') : 'Install live sensor'}</button>
+      {#if installNotice}<span class="opt">{installNotice}</span>{/if}
+    </div>
+    <div class="hint" data-tauri-drag-region>
+      The sensor resolves the game's routines by name, so it keeps working across game updates. It reads gold, XP, kills, rare drops, the room and the satanic zone; it never writes to the game.
+    </div>
+  </div>
   {#if settings && session}
     <div class="section" style:border-image-source="url({art('chip_dark')})">
       {#if overlay && advanced}
@@ -319,6 +382,8 @@
 </div>
 
 <style>
+  .ok { color: #45c15a; }
+
   @font-face {
     font-family: 'Offline Tracker UI';
     src: local('Segoe UI Semibold'), local('Segoe UI');

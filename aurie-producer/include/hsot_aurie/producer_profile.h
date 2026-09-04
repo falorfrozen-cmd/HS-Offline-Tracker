@@ -26,6 +26,10 @@ struct DropRouteProfile {
     std::string_view routine_name;
     std::string_view hook_id;
     std::array<std::uint32_t, 5U> ground_caller_return_rvas{};
+    // Exact reviewed builds accept only the enumerated local-generation
+    // callers. An adaptive build has no reviewed RVAs; it guards the route by
+    // hooking the player-discard and API reconstruction routines instead.
+    bool caller_allowlist{true};
 };
 
 struct VitalsRouteProfile {
@@ -45,6 +49,10 @@ struct ProducerProfile {
     std::array<NamedRouteProfile, 3U> routes;
     DropRouteProfile drop_route;
     VitalsRouteProfile magic_find_route;
+    VitalsRouteProfile room_route;
+    // True for the name-resolved profile used on builds without an exact
+    // reviewed fingerprint.
+    bool adaptive{};
 };
 
 // The tracked values are the resolved S10 rarity IDs stored in itemInfoStruct[27].
@@ -105,6 +113,57 @@ inline constexpr VitalsRouteProfile kMagicFindRouteUnavailable{
     "",
 };
 
+// Name-resolved ground-item route: no reviewed caller list, guarded at
+// runtime by the player-discard / API hooks and the room-load quiet window.
+inline constexpr DropRouteProfile kGroundDropRouteAdaptive{
+    true,
+    "gml_Script_LootGroundInit",
+    "hsot_ground_item_init",
+    {{0U, 0U, 0U, 0U, 0U}},
+    false,
+};
+
+// The character sheet prints ReturnSpecificStat(<magic find id>); the
+// StatMagicFind routine underneath returns a carry array, not that number.
+// Disabled: a hook on StatMagicFind (and on ReturnSpecificStat above it)
+// crashed 7.0.6.0 inside the runner's CallBuiltin as soon as the stat was
+// computed, four times at the same offset. The element that carries the
+// character sheet's percentage is still unsettled; see producer README.
+inline constexpr VitalsRouteProfile kMagicFindRouteNamed{
+    false,
+    "gml_Script_StatMagicFind",
+    "hsot_stat_magic_find",
+};
+
+inline constexpr VitalsRouteProfile kRoomRouteNamed{
+    true,
+    "gml_Script_RoomGoto",
+    "hsot_room_goto",
+};
+
+// Every route by name, the earned-gold argument found at call time.
+inline constexpr std::array<NamedRouteProfile, 3U> kCounterRoutesAdaptive{{
+    {"gml_Script_GoldLogAdd", "hsot_gold_log_add", 2, -1, SensorKind::gold, true},
+    {"gml_Script_ExperienceUpdate", "hsot_experience_update", 2, 0, SensorKind::xp, true},
+    {"gml_Script_EnemyAddStatistics", "hsot_enemy_add_statistics", 1, 0,
+        SensorKind::kill_candidate, true},
+}};
+
+inline constexpr ProducerProfile kAdaptiveProfile{
+    "adaptive",
+    0ULL,
+    0U,
+    0x8664U,
+    0U,
+    "",
+    {{"", ""}},
+    kCounterRoutesAdaptive,
+    kGroundDropRouteAdaptive,
+    kMagicFindRouteNamed,
+    kRoomRouteNamed,
+    true,
+};
+
 inline constexpr std::array<NamedRouteProfile, 3U> kCounterRoutesLegacy{{
     {"gml_Script_GoldLogAdd", "hsot_gold_log_add", 2, 0, SensorKind::gold, true},
     {"gml_Script_ExperienceUpdate", "hsot_experience_update", 2, 0, SensorKind::xp, true},
@@ -140,7 +199,9 @@ inline constexpr std::array<ProducerProfile, 2U> kSupportedProfiles{{
         }},
         kCounterRoutesLegacy,
         kGroundDropRouteUnavailable,
-        kMagicFindRouteUnavailable,
+        kMagicFindRouteNamed,
+        kRoomRouteNamed,
+        false,
     },
     {
         "S10-code-c4dc91d9",
@@ -155,7 +216,9 @@ inline constexpr std::array<ProducerProfile, 2U> kSupportedProfiles{{
         }},
         kCounterRoutesCurrent,
         kGroundDropRouteCurrent,
-        kMagicFindRouteUnavailable,
+        kMagicFindRouteNamed,
+        kRoomRouteNamed,
+        false,
     },
 }};
 

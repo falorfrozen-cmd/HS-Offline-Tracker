@@ -138,12 +138,55 @@ std::string SerializeNdjson(const VitalsEvent& event) {
     output.reserve(320U);
     output.push_back('{');
     AppendEnvelope(output, event.envelope, "vitals");
-    output += ",";
-    AppendKey(output, "magic_find");
-    AppendDouble(output, event.magic_find);
+    if (!event.omit_magic_find) {
+        output += ",";
+        AppendKey(output, "magic_find");
+        AppendDouble(output, event.magic_find);
+    }
+    if (event.satanic_here) {
+        output += ",";
+        AppendKey(output, "satanic_here");
+        output += *event.satanic_here ? "true" : "false";
+    }
     output += ",";
     AppendKey(output, "source");
     AppendEscaped(output, event.source);
+    output += "}\n";
+    return output;
+}
+
+std::string SerializeNdjson(const RoomEvent& event) {
+    std::string output;
+    output.reserve(256U);
+    output.push_back('{');
+    AppendEnvelope(output, event.envelope, "room");
+    output += ",";
+    AppendKey(output, "room");
+    AppendEscaped(output, event.room);
+    output += "}\n";
+    return output;
+}
+
+std::string SerializeNdjson(const SatanicZoneEvent& event) {
+    std::string output;
+    output.reserve(320U);
+    output.push_back('{');
+    AppendEnvelope(output, event.envelope, "satanic_zone");
+    output += ",";
+    AppendKey(output, "zone");
+    AppendEscaped(output, event.zone);
+    const auto append_ids = [&output](const std::string_view key, const std::vector<std::uint8_t>& ids) {
+        output += ",";
+        AppendKey(output, key);
+        output.push_back('[');
+        for (std::size_t index = 0U; index < ids.size(); ++index) {
+            if (index != 0U) output.push_back(',');
+            AppendUnsigned(output, ids[index]);
+        }
+        output.push_back(']');
+    };
+    append_ids("buffs", event.buffs);
+    append_ids("debuffs", event.debuffs);
     output += "}\n";
     return output;
 }

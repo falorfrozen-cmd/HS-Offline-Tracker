@@ -6,7 +6,7 @@ mod save_source;
 mod sniffer;
 mod stats;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
@@ -1067,7 +1067,9 @@ fn saved_window_position(app: &AppHandle, label: &str) -> Option<tauri::Physical
 /// emits only to what is actually on screen. The heartbeats keep the per-hour
 /// rates fresh while nothing is dropping.
 const SNAP_MIN_GAP: Duration = Duration::from_millis(400);
-const SNAP_HEARTBEAT: Duration = Duration::from_millis(2000);
+// A snapshot goes out when something changed; the heartbeat only keeps a
+// window's age labels moving while nothing does.
+const SNAP_HEARTBEAT: Duration = Duration::from_millis(5000);
 const EXTRA_MIN_GAP: Duration = Duration::from_millis(1000);
 
 /// The dashboard shows one section at a time and says which, so the heavy
@@ -1444,7 +1446,8 @@ fn spawn_strip_poller(app: AppHandle) {
                 }
                 ignoring = Some(want_ignore);
             }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            // ten cursor reads a second are plenty for a hover state
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
     });
 }
@@ -3153,6 +3156,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             snapshot,
             get_extra,
+            producer_status,
+            install_producer,
             reset_stats,
             set_paused,
             about,
@@ -3315,6 +3320,140 @@ pub fn run() {
             end_run(app);
         }
     });
+}
+
+// ---- live sensor installer -------------------------------------------------
+
+const PRODUCER_DLL: &str = "HSOfflineTrackerProducer.dll";
+
+/// What the settings page needs to say whether live numbers can arrive: is the
+/// game seen, does it carry Aurie, is the sensor beside it, and is it talking.
+#[derive(Serialize)]
+pub struct ProducerStatus {
+    game_exe: Option<String>,
+    game_dir: Option<String>,
+    aurie: bool,
+    installed: bool,
+    installed_size: u64,
+    installed_current: bool,
+    bundled: bool,
+    bundled_size: u64,
+    game_up: bool,
+    pipe_up: bool,
+}
+
+fn remembered_game_dir() -> Option<PathBuf> {
+    let text = std::fs::read_to_string(data_dir().join("game_dir.txt")).ok()?;
+    let dir = PathBuf::from(text.trim());
+    dir.is_dir().then_some(dir)
+}
+
+fn remember_game_dir(dir: &Path) {
+    let _ = std::fs::write(data_dir().join("game_dir.txt"), dir.to_string_lossy().as_bytes());
+}
+
+/// The game's `bin` folder: from the running process when there is one, else
+/// the one remembered from the last time.
+fn game_dir() -> Option<PathBuf> {
+    if let Some(dir) = sniffer::game_exe().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
+        remember_game_dir(&dir);
+        return Some(dir);
+    }
+    remembered_game_dir()
+}
+
+/// The sensor shipped with this build: beside the executable in a package,
+/// or the producer's own build output in a development checkout.
+fn bundled_producer(app: &AppHandle) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(resources) = app.path().resource_dir() {
+        candidates.push(resources.join(PRODUCER_DLL));
+        candidates.push(resources.join("producer").join(PRODUCER_DLL));
+    }
+    candidates.push(exe_dir().join(PRODUCER_DLL));
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("aurie-producer")
+            .join("build")
+            .join("bin")
+            .join("Release")
+            .join(PRODUCER_DLL),
+    );
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+fn file_len(path: &Path) -> u64 {
+    std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+#[tauri::command]
+fn producer_status(app: AppHandle) -> ProducerStatus {
+    let game_exe = sniffer::game_exe();
+    let dir = game_dir();
+    let bundled = bundled_producer(&app);
+    let installed_path = dir.as_ref().map(|d| d.join("mods").join("aurie").join(PRODUCER_DLL));
+    let installed = installed_path.as_ref().is_some_and(|p| p.is_file());
+    let installed_size = installed_path.as_ref().map(|p| file_len(p)).unwrap_or(0);
+    let bundled_size = bundled.as_ref().map(|p| file_len(p)).unwrap_or(0);
+    let installed_current = installed
+        && installed_size == bundled_size
+        && installed_path
+            .as_ref()
+            .zip(bundled.as_ref())
+            .and_then(|(a, b)| Some(std::fs::read(a).ok()? == std::fs::read(b).ok()?))
+            .unwrap_or(false);
+    ProducerStatus {
+        game_exe: game_exe.map(|p| p.to_string_lossy().into_owned()),
+        aurie: dir.as_ref().is_some_and(|d| d.join("AurieCore.dll").is_file()),
+        game_dir: dir.map(|p| p.to_string_lossy().into_owned()),
+        installed,
+        installed_size,
+        installed_current,
+        bundled: bundled.is_some(),
+        bundled_size,
+        game_up: sniffer::game_up(),
+        pipe_up: sniffer::pipe_up(),
+    }
+}
+
+/// Copies the live sensor into the game's Aurie mod folder. Never touches the
+/// game's own files; a previous copy of the sensor is kept beside the new one.
+#[tauri::command]
+fn install_producer(app: AppHandle) -> Result<String, String> {
+    let dir = game_dir().ok_or_else(|| {
+        "The game has not been seen yet. Start Hero Siege once, then install.".to_string()
+    })?;
+    if !dir.join("AurieCore.dll").is_file() {
+        return Err(format!(
+            "Aurie is not installed in {}. Install the Aurie/YYToolkit mod loader first (ForgePact's Install button does this).",
+            dir.display()
+        ));
+    }
+    let source = bundled_producer(&app)
+        .ok_or_else(|| "This build does not carry the live sensor file.".to_string())?;
+    let mods = dir.join("mods").join("aurie");
+    std::fs::create_dir_all(&mods).map_err(|e| format!("cannot create {}: {e}", mods.display()))?;
+    let target = mods.join(PRODUCER_DLL);
+    if target.is_file() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        // Aurie loads every *.dll in this folder, so the copy kept aside must
+        // not end in .dll.
+        let backup = mods.join(format!("{PRODUCER_DLL}.previous_{stamp}"));
+        let _ = std::fs::copy(&target, &backup);
+    }
+    std::fs::copy(&source, &target).map_err(|e| {
+        if sniffer::game_up() {
+            format!("cannot replace {}: {e}. Close Hero Siege and install again.", target.display())
+        } else {
+            format!("cannot write {}: {e}", target.display())
+        }
+    })?;
+    crate::log::say("producer", &format!("installed {} -> {}", source.display(), target.display()));
+    Ok(format!("Live sensor installed to {}. Start Hero Siege to use it.", mods.display()))
 }
 
 #[cfg(test)]

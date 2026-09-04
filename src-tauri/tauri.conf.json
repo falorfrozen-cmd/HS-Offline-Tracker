@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "HS Offline Tracker",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "io.falorfrozen.hsofflinetracker",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -66,7 +66,8 @@
     "resources": [
       "../LICENSE",
       "../THIRD_PARTY_NOTICES.md",
-      "../PROTOCOL.md"
+      "../PROTOCOL.md",
+      "../aurie-producer/build/bin/Release/HSOfflineTrackerProducer.dll"
     ],
     "licenseFile": "../LICENSE",
     "shortDescription": "Offline Hero Siege loot journal and overlay",

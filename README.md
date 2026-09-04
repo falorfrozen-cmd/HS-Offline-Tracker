@@ -73,6 +73,24 @@ verified tuples and translation data. The project intentionally has no automatic
 game-data extraction command: ambiguous IDs stay unchanged until a real event or
 save tuple proves the mapping.
 
+## Live sensor
+
+Instant gold, XP, kills, rare drops, the current room and the satanic zone with
+its modifiers come from the Aurie producer module
+(`aurie-producer`). Open **Settings > Game link** and press **Install live
+sensor**: the tracker copies `HSOfflineTrackerProducer.dll` into the game's
+`mods/aurie` folder (the Aurie/YYToolkit loader must already be there). The
+sensor resolves the game's routines by name, so it keeps working after game
+updates; the status line on that page says whether the game is seen, the
+sensor is installed and events are flowing. Live magic find is not read yet:
+the game's stat routines cannot be hooked safely on the current build, so the
+panel leaves it out.
+
+The dashboard's right column shows the zone, the satanic zone's pros and cons
+(names and wording from the game's own translation table; buff magnitudes as
+read from the game, debuffs without magnitudes), and the items the game ties to
+the current area with their odds.
+
 ## Development
 
 Requirements:
@@ -81,6 +99,11 @@ Requirements:
 - Rust 1.88 or newer through rustup
 - Tauri 2 desktop prerequisites
 - On Windows: WebView2 and the Visual Studio C++ build tools
+
+Cargo writes its build output outside the checkout (see `src-tauri/.cargo/config.toml`),
+so a checkout inside OneDrive is not synced gigabyte by gigabyte. Build the live sensor with
+`powershell -File aurie-producer/build.ps1` (Visual Studio C++ and CMake); the packaged
+installer bundles the DLL it finds in `aurie-producer/build/bin/Release`.
 
 Install dependencies and build the web interface:
 

@@ -24,7 +24,8 @@ use crate::save_source::SaveWatcher;
 use crate::stats::GameStats;
 
 const POLL: Duration = Duration::from_millis(100);
-const PROCESS_POLL_TICKS: u8 = 10;
+// Every 3 s: enumerating every process each second was the loop's only real cost.
+const PROCESS_POLL_TICKS: u8 = 30;
 const SAVE_POLL_TICKS: u8 = 10;
 const MAX_EVENT_BYTES: usize = 1 << 20;
 const READ_CHUNK_BYTES: usize = 64 << 10;
@@ -139,6 +140,21 @@ impl Default for Shared {
 
 static GAME_UP: AtomicBool = AtomicBool::new(false);
 static GAME_PID: AtomicU32 = AtomicU32::new(0);
+/// Where the running game's executable is, so the settings page can install
+/// the live sensor beside it without asking the player for a path.
+static GAME_EXE: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+pub fn game_exe() -> Option<PathBuf> {
+    GAME_EXE.lock().ok().and_then(|g| g.clone())
+}
+
+pub fn game_up() -> bool {
+    GAME_UP.load(Ordering::Relaxed)
+}
+
+pub fn pipe_up() -> bool {
+    PIPE_UP.load(Ordering::Relaxed)
+}
 static PIPE_UP: AtomicBool = AtomicBool::new(false);
 static EVENT_COUNT: AtomicU64 = AtomicU64::new(0);
 
@@ -213,6 +229,9 @@ fn game_process(sys: &mut System) -> Option<(u32, Option<SystemTime>)> {
         .map(|p| {
             let started_at =
                 (p.start_time() != 0).then(|| UNIX_EPOCH + Duration::from_secs(p.start_time()));
+            if let Ok(mut slot) = GAME_EXE.lock() {
+                *slot = p.exe().map(|path| path.to_path_buf());
+            }
             (p.pid().as_u32(), started_at)
         })
 }
