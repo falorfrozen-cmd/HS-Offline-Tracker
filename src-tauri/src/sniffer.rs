@@ -323,6 +323,15 @@ fn text(v: &Value, key: &str) -> String {
         .to_string()
 }
 
+/// "weapons_unique_gladius": a localization key the game had not resolved yet,
+/// not a name anyone should read.
+fn looks_like_key(name: &str) -> bool {
+    name.contains('_')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
 fn text_any(v: &Value, keys: &[&str]) -> String {
     first(v, keys)
         .and_then(|value| match value {
@@ -527,7 +536,10 @@ fn decode_line(line: &str) -> Result<Vec<GameEvent>, String> {
             let item_id = integer_any(item, &["item_id", "itemId"]).max(integer(definition, "b"));
             let weapon_type =
                 integer_any(item, &["weapon_type", "weaponType"]).max(integer(definition, "j"));
-            if name.is_empty() {
+            // The sensor sends the name the game shows. The table still wins
+            // when the wire carries a raw localization key for an item it
+            // knows, so a key never reaches the journal as a name.
+            if name.is_empty() || looks_like_key(&name) {
                 if let Some(known_name) = crate::items::item_name(item_type, item_id, weapon_type) {
                     name = known_name.to_owned();
                 }
@@ -1068,5 +1080,23 @@ mod tests {
         }
         assert_eq!(decoded, 9);
         assert_eq!(drops, 3);
+    }
+}
+
+#[cfg(test)]
+mod drop_name_tests {
+    use super::*;
+
+    /// A raw localization key on the wire yields to the table; a real name
+    /// stays as the game sent it.
+    #[test]
+    fn a_localization_key_is_not_a_name() {
+        assert!(looks_like_key("weapons_unique_gladius"));
+        assert!(looks_like_key("belts_normal_heavy_belt"));
+        assert!(!looks_like_key("Shattered Dimensions"));
+        assert!(!looks_like_key("St. Draxis' Pigstick"));
+        assert!(!looks_like_key("Judge, Jury & Executioner"));
+        assert!(!looks_like_key("Diablo"));
+        assert!(!looks_like_key(""));
     }
 }

@@ -76,11 +76,46 @@ constexpr std::size_t kMaximumDropsPerPublishCycle = 8U;
 // after a room loads, so the first moments of a room are not counted as drops.
 constexpr std::uint64_t kRoomLoadDropQuietMs = 1500U;
 
+// Room for the longest item name the game shows ("Judge, Jury & Executioner"
+// is 25 bytes) with margin for other languages; longer names are cut at a
+// character boundary, never lost.
+constexpr std::size_t kDropNameCapacity = 96U;
+
 struct DropSnapshot {
     std::int64_t rarity{};
     std::int64_t item_type{};
     std::int64_t item_id{};
+    // Which weapon: a sword and a bow share ids, the name table needs this.
+    std::int64_t weapon_type{};
+    // The name the game shows, so the journal can name an item the table
+    // does not know (a newer game build) and never has to guess.
+    char name[kDropNameCapacity]{};
 };
+
+// Copies a game string into the fixed-size slot without allocating: the drop
+// routine must not touch the heap. A cut never lands inside a UTF-8 sequence.
+void CopyDropName(const RValue& value, char (&slot)[kDropNameCapacity]) noexcept {
+    slot[0] = '\0';
+    try {
+        const char* text = value.ToCString();
+        if (!text) {
+            return;
+        }
+        std::size_t n = 0;
+        while (n + 1 < kDropNameCapacity && text[n] != '\0') {
+            slot[n] = text[n];
+            ++n;
+        }
+        if (text[n] != '\0') {
+            while (n > 0 && (static_cast<unsigned char>(text[n]) & 0xC0U) == 0x80U) {
+                --n;
+            }
+        }
+        slot[n] = '\0';
+    } catch (...) {
+        slot[0] = '\0';
+    }
+}
 
 // Hooks can be reached from more than one game thread.  The tiny producer guard
 // serializes only the fixed-size copy below; no allocation, JSON formatting or
@@ -855,7 +890,22 @@ void CaptureZone(CInstance* self, CInstance* other, const RValue& target_room) n
     if (*item_type > 255 || *item_id > 65535) {
         return std::nullopt;
     }
-    return DropSnapshot{*rarity, *item_type, *item_id};
+    DropSnapshot snapshot{*rarity, *item_type, *item_id};
+    // The definition's "j" is the weapon type (the save parser reads it from
+    // the same place); "28" of the info struct is the display name, already
+    // localized once the item exists on the ground.
+    RValue weapon_type_value;
+    if (TryGetStructMember(definition, "j", weapon_type_value)) {
+        if (const auto weapon_type = CaptureNonNegativeValue(weapon_type_value);
+            weapon_type && *weapon_type <= 255) {
+            snapshot.weapon_type = *weapon_type;
+        }
+    }
+    RValue name_value;
+    if (TryGetStructMember(info, "28", name_value) && name_value.m_Kind == VALUE_STRING) {
+        CopyDropName(name_value, snapshot.name);
+    }
+    return snapshot;
 }
 
 [[nodiscard]] bool AtomicAccumulate(
@@ -1464,6 +1514,12 @@ void PublishPendingZone() {
     }
     event.item_type = snapshot.item_type;
     event.item_id = snapshot.item_id;
+    if (snapshot.weapon_type > 0) {
+        event.weapon_type = snapshot.weapon_type;
+    }
+    if (snapshot.name[0] != '\0') {
+        event.item_name = std::string(snapshot.name);
+    }
     event.amount = 1;
     if (PublishLine(hsot::protocol::SerializeNdjson(event)) != hsot::PublishResult::queued) {
         return false;
