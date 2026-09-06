@@ -2862,6 +2862,30 @@ fn sound_path(rarity: String) -> Option<String> {
         .map(|p| p.to_string_lossy().into_owned())
 }
 
+/// A number that changes whenever the custom file does, for the frontend to
+/// hang on the asset URL. The file is always filed under the same name, so
+/// without it a re-picked sound had the URL of the previous pick and the
+/// webview's cache kept playing that one.
+#[tauri::command(async)]
+fn sound_stamp(rarity: String) -> Option<u64> {
+    if !sound_key(&rarity) {
+        return None;
+    }
+    SOUND_EXTS
+        .iter()
+        .map(|(ext, _)| sounds_dir().join(format!("{rarity}.{ext}")))
+        .find_map(|p| std::fs::metadata(p).ok())
+        .map(|meta| {
+            let modified = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            modified.wrapping_mul(31).wrapping_add(meta.len())
+        })
+}
+
 #[tauri::command(async)]
 fn sound_status(rarity: String) -> Option<String> {
     if !sound_key(&rarity) {
@@ -3193,6 +3217,7 @@ pub fn run() {
             load_sound,
             sound_path,
             sound_status,
+            sound_stamp,
             set_wide_capture,
             pick_sound,
             copy_sound,

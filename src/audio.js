@@ -20,7 +20,12 @@ export async function soundUrl(key) {
     try {
       const path = await invoke('sound_path', { rarity: key });
       if (path) {
-        const url = convertFileSrc(path);
+        // The file is always filed under the same name, so the URL alone never
+        // changed when the player picked another sound — and the webview's
+        // cache kept handing back the first pick. The stamp makes each file
+        // its own URL; a cleared sound has no path and falls to the default.
+        const stamp = await invoke('sound_stamp', { rarity: key }).catch(() => null);
+        const url = `${convertFileSrc(path)}${stamp ? `?v=${stamp}` : ''}`;
         if (await loadable(url)) return url;
         const inlined = await invoke('load_sound', { rarity: key });
         if (inlined && (await loadable(inlined))) return inlined;
@@ -91,7 +96,9 @@ function bufferFor(url) {
       try {
         const ctx = context();
         if (!ctx) return null;
-        const response = await fetch(url, { cache: 'force-cache' });
+        // Bundled defaults never change; a custom file is read fresh, its
+        // URL says which version is wanted.
+        const response = await fetch(url, { cache: url.includes('?v=') ? 'no-store' : 'force-cache' });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return await ctx.decodeAudioData(await response.arrayBuffer());
       } catch (error) {

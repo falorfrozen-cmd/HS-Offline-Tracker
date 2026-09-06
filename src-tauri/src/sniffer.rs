@@ -528,22 +528,33 @@ fn decode_line(line: &str) -> Result<Vec<GameEvent>, String> {
             let null = Value::Null;
             let definition = item.get("itemDefinitionStruct").unwrap_or(&null);
             let info = item.get("itemInfoStruct").unwrap_or(&null);
-            let mut name = text_any(item, &["name", "display_name"]);
-            if name.is_empty() {
-                name = text(info, "28");
+            let mut wire_name = text_any(item, &["name", "display_name"]);
+            if wire_name.is_empty() {
+                wire_name = text(info, "28");
             }
             let item_type = integer_any(item, &["item_type", "itemType"]);
             let item_id = integer_any(item, &["item_id", "itemId"]).max(integer(definition, "b"));
             let weapon_type =
                 integer_any(item, &["weapon_type", "weaponType"]).max(integer(definition, "j"));
-            // The sensor sends the name the game shows. The table still wins
-            // when the wire carries a raw localization key for an item it
-            // knows, so a key never reaches the journal as a name.
-            if name.is_empty() || looks_like_key(&name) {
-                if let Some(known_name) = crate::items::item_name(item_type, item_id, weapon_type) {
-                    name = known_name.to_owned();
-                }
-            }
+            // The lists are matched by name and carry the table's spelling,
+            // so for an identity the table knows, the table's name is the
+            // one that counts — a weapon the sensor named a little
+            // differently made no card. The wire name is kept for an item
+            // the table has never heard of (a newer game build), unless it
+            // is a raw localization key, which is no name at all.
+            // Only a packet that names an identity gets the table's answer: id 0
+            // is a real item, so a name-only packet must not be renamed to
+            // whatever sits at the table's origin.
+            let has_identity = first(item, &["item_type", "itemType"]).is_some()
+                || item.get("itemDefinitionStruct").is_some();
+            let known_name = has_identity
+                .then(|| crate::items::item_name(item_type, item_id, weapon_type))
+                .flatten();
+            let name = match known_name {
+                Some(known_name) => known_name.to_owned(),
+                None if looks_like_key(&wire_name) => String::new(),
+                None => wire_name,
+            };
             let phase = text_any(&value, &["phase", "state"]).to_ascii_lowercase();
             let ground = match kind.as_str() {
                 "ground_drop" | "drop_spawned" => true,
@@ -1098,5 +1109,41 @@ mod drop_name_tests {
         assert!(!looks_like_key("Judge, Jury & Executioner"));
         assert!(!looks_like_key("Diablo"));
         assert!(!looks_like_key(""));
+    }
+
+    fn drop_name(item: &str) -> String {
+        let line = format!(
+            r#"{{"protocol":"hs-offline-tracker/1","v":1,"kind":"ground_drop","event_id":"s10-1-1","source":"game_ground_item_create","item":{item}}}"#
+        );
+        let events = decode_line(&line).expect("a protocol v1 drop");
+        let GameEvent::ItemAdded { name, .. } = &events[0] else {
+            panic!("not an item event");
+        };
+        name.clone()
+    }
+
+    /// A weapon is named by its weapon type, and the table's spelling is the
+    /// one the lists carry — so it wins over the sensor's for a known item.
+    #[test]
+    fn a_known_weapon_takes_the_tables_name_and_an_unknown_one_keeps_the_games() {
+        let table = crate::items::item_name(3, 5, 2).expect("weapon 3:5:2 is in the table");
+        assert_eq!(
+            drop_name(r#"{"rarity":"Angelic","item_type":3,"item_id":5,"weapon_type":2,"name":"thunder dagger "}"#),
+            table
+        );
+        assert_eq!(
+            drop_name(r#"{"rarity":"Angelic","item_type":3,"item_id":5,"weapon_type":2}"#),
+            table
+        );
+        assert_eq!(
+            drop_name(r#"{"rarity":"Angelic","item_type":3,"item_id":64000,"weapon_type":2,"name":"Brand New Blade"}"#),
+            "Brand New Blade"
+        );
+        assert_eq!(
+            drop_name(r#"{"rarity":"Angelic","item_type":3,"item_id":64000,"weapon_type":2,"name":"weapons_unique_new"}"#),
+            ""
+        );
+        // no identity at all: the name is all there is, and 0:0:0 is not it
+        assert_eq!(drop_name(r#"{"rarity":"Angelic","name":"Arcane Reliquary"}"#), "Arcane Reliquary");
     }
 }
