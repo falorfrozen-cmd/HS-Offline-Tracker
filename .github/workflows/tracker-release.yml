@@ -1,0 +1,269 @@
+# Build the Tracker release artefacts in CI and upload them to the tag's
+# draft release.
+#
+# Started two ways: tracker-tag.yml starts this workflow right after it
+# leaves the draft, passing the tag as an input (see that workflow's "Start
+# the build" step). A person can also run it by hand with a `tag` input, e.g.
+# to fill a draft that already exists, or to re-run a build that failed.
+#
+# Dispatched against `main`, never against the tag ref -- so a fix made to
+# this workflow can be applied to an already-tagged version. Unlike
+# ForgePact's build job, there is no second checkout of `main` for pins or a
+# compiler-discovery shim: the Tracker's build entry points are
+# cmake/npm/tauri, which need no discovery shim, and the first tag this
+# workflow will ever build (v0.1.3) is cut after the tooling merges, so its
+# own tree already carries the pins, the fetch script and the packager. One
+# checkout of the TAG is therefore correct -- see the module guide, "The
+# build half (tracker-release.yml)".
+#
+# It only ever uploads assets onto an EXISTING DRAFT release -- it never
+# makes a new release object, never edits one, never flips a release out of
+# draft, and never touches which release is "latest". Publishing stays a
+# human act, and the module guide's CI launch gate is what that human runs --
+# installing from this exact zip, running Game Link against a real
+# installation, and launching the game -- before pressing Publish.
+name: Tracker release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build, e.g. v0.1.3 (or just 0.1.3)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Build and test without uploading anything to the draft'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tracker-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      # Uploading assets to the draft. Nothing here starts another workflow
+      # run, so this job needs no permission over the Actions API itself.
+      contents: write
+    steps:
+      # A release is built from main -- see the header comment for why this
+      # workflow does not take the tag ref itself.
+      - name: This has to be run from main
+        shell: bash
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [ "$BRANCH" != "main" ]; then
+            echo "::error::Run this from main. It was started on '$BRANCH'."
+            exit 1
+          fi
+
+      # Deliberately independent of scripts/tracker-tag.mjs's --normalize --
+      # the same duplication ForgePact's tools/release_ci.py makes against
+      # forgepact_tag.py, and for the same reason: this runs before any
+      # checkout (the tag's own tree is what gets checked out below, and a
+      # single checkout is the point -- see the header comment), so it
+      # cannot import the repository's own scripts yet. Only has to agree
+      # with scripts/tracker-tag.mjs on what a version looks like.
+      - name: Normalise the tag
+        id: tag
+        shell: bash
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
+        run: |
+          version="${TAG_INPUT#v}"
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'$TAG_INPUT' is not a version this can build. Give three numbers, as 1.2.3 or v1.2.3."
+            exit 1
+          fi
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # First of two draft guards -- this one before any checkout, so a bad
+      # tag or an already-published release fails fast on a cheap step. The
+      # second sits right before the upload, because a human can publish the
+      # draft during the time this job runs.
+      - name: This release exists and is still a draft (guard 1)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          count=$(gh api "repos/$REPO/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"$TAG\")] | length")
+          if [ "$count" = "0" ]; then
+            echo "::error::$TAG has no release yet -- run \"Tracker tag\" first."
+            exit 1
+          fi
+          if [ "$count" != "1" ]; then
+            echo "::error::$TAG has $count releases; expected exactly one."
+            exit 1
+          fi
+          draft=$(gh api "repos/$REPO/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"$TAG\")][0].draft")
+          if [ "$draft" != "true" ]; then
+            echo "::error::$TAG is already published -- refusing to replace a published release's assets."
+            exit 1
+          fi
+          echo "draft release confirmed for $TAG"
+
+      # The one and only checkout: the tagged tree. Everything from here on
+      # -- the pins, the fetch/package scripts, the workflow's own npm
+      # scripts -- comes from the tag, never from main.
+      - name: Check out the tagged tree
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
+
+      - name: Record the source commit
+        id: source_commit
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: The tree agrees with the tag
+        shell: bash
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: node scripts/set-version.mjs --check --expect "$VERSION"
+
+      # aurie-producer/CMakeLists.txt's YYTK_SDK_ROOT needs these headers to
+      # compile (see aurie-producer/toolchain-pins.json); they are AGPL-3.0
+      # and never committed, so a fresh checkout fetches them every run.
+      - name: Fetch the pinned producer headers
+        shell: bash
+        run: node scripts/fetch-producer-sdk.mjs
+
+      # build.ps1 already does exactly this: configure with the given
+      # YYTK_SDK_ROOT, build x64 Release, and run the CTest suite with
+      # --output-on-failure -- the repository's first automated run of the
+      # three C++ smoke tests (hsot_counter_validation_smoke,
+      # hsot_aurie_code_gate_smoke, hsot_aurie_protocol_smoke). Its output
+      # is aurie-producer/build/bin/Release/HSOfflineTrackerProducer.dll,
+      # which tauri.conf.json's bundle.resources already expects there.
+      - name: Build and test the producer (CMake, x64 Release, CTest)
+        shell: pwsh
+        run: ./aurie-producer/build.ps1 -Configuration Release -YytkSdkRoot aurie-producer/.sdk
+
+      - name: npm ci
+        shell: bash
+        run: npm ci
+
+      - name: Node tool tests
+        shell: bash
+        run: npm run tools:test
+
+      - name: Rust tests (npm test)
+        shell: bash
+        run: npm test
+
+      - name: Loader verification
+        shell: bash
+        run: npm run loader:verify
+
+      - name: Build the frontend
+        shell: bash
+        run: npm run build
+
+      - name: Build the Tauri bundle
+        shell: bash
+        run: npm run package
+
+      - name: Package the release (portable zip + checksums)
+        id: package
+        shell: bash
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          out=$(node scripts/package-release.mjs --version "$VERSION" --out "$RUNNER_TEMP/out")
+          echo "$out"
+          zip_path=$(echo "$out" | sed -n '1p')
+          echo "zip_path=$zip_path" >> "$GITHUB_OUTPUT"
+          echo "zip_hash=$(sha256sum "$zip_path" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      # A dry run never touches the draft; the built artefacts are only kept
+      # as downloadable workflow artifacts so they can be inspected without
+      # re-running.
+      - name: Keep the artefacts on a dry run
+        if: inputs.dry_run
+        uses: actions/upload-artifact@v4
+        with:
+          name: tracker-release-dry-run
+          path: |
+            ${{ runner.temp }}/out/*
+          retention-days: 7
+
+      # Second draft guard, right before the write this job exists to make.
+      # A human can publish the draft while this job was building, and the
+      # upload step below is only safe with --clobber because both guards
+      # ran.
+      - name: This release is still a draft (guard 2)
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          draft=$(gh api "repos/$REPO/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"$TAG\")][0].draft")
+          if [ "$draft" != "true" ]; then
+            echo "::error::$TAG is no longer a draft -- refusing to upload. A human may have published it during this build."
+            exit 1
+          fi
+
+      - name: Upload to the draft
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          gh release upload "$TAG" \
+            "$RUNNER_TEMP/out/hs-offline-tracker-$VERSION-portable.zip" \
+            "$RUNNER_TEMP/out/SHA256SUMS-$VERSION.txt" \
+            --clobber --repo "$REPO"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          ZIP_HASH: ${{ steps.package.outputs.zip_hash }}
+          SOURCE_SHA: ${{ steps.source_commit.outputs.sha }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "### Tracker release: $TAG"
+            echo
+            echo "- source commit: \`$SOURCE_SHA\`"
+            echo "- zip sha256: \`$ZIP_HASH\`"
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "- dry run: nothing uploaded"
+            else
+              echo "- uploaded to the draft"
+            fi
+            echo
+            echo "**Not live-verified.** Install from this zip, run Game Link"
+            echo "against a real installation, and launch the game before"
+            echo "publishing -- see the module guide's \"CI build launch"
+            echo "gate\" table."
+          } >> "$GITHUB_STEP_SUMMARY"
