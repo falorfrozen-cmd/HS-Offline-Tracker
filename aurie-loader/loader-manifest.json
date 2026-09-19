@@ -1,0 +1,8 @@
+{
+  "_comment": "Expected sha256 of every binary bundled from aurie-loader/. Checked by scripts/verify-loader.mjs, wired into `npm run check`. Update the relevant entry whenever a loader binary is intentionally replaced (see docs/submodules/HS-Offline-Tracker/instructions.md, 'Bundled Loader & Modified YYToolkit').",
+  "files": [
+    { "path": "AurieCore.dll", "sha256": "18e3a1de980f487a6b3858b673d2030e96984dd96de3a047b43a263a5ba829ae" },
+    { "path": "YYToolkit.dll", "sha256": "51a393d7e5291ad76bdb85b9f44faf5178b6b20e0ce8432fa26bdaf9e21eadf8" },
+    { "path": "AuriePatcher.exe", "sha256": "4d3aec439dbba5209ad48fb0a40d6324406247fe678541df9031f5b89363d536" }
+  ]
+}
