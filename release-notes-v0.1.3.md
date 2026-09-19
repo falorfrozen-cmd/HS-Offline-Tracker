@@ -1,18 +1,20 @@
-A cleaner, documented mod loader with real provenance, verified before it ships, and an existing install now updates itself.
+A cleaner mod loader, and an existing install now keeps it up to date.
 
 ## What is new
 
-**The bundled YYToolkit is now the toolkit hub's documented `hs.1` build.** The previous `YYToolkit.dll` was the same undocumented binary ForgePact used to ship, whose notice claimed only two changes while the binary's own strings said otherwise. It is replaced with a launch-gated build produced from the hub's own patch series, with a `YYToolkit-BUILD-INFO.json` provenance record now bundled alongside the loader notice so the exact patches and commit a copy was built from are always on hand.
+**The bundled mod loader is replaced with a documented build.** The Tracker ships YYToolkit, the loader that lets the live sensor run inside the game. The copy it used to ship was an older, undocumented build, the same one ForgePact shipped, and nobody could say exactly what was in it. It is now a build made from a published, documented set of changes. A small record of exactly what it was built from now ships next to it.
 
-**An existing installation updates its loader instead of being left behind.** Previously the loader was only ever installed once; a Tracker upgrade that replaced the bundled `YYToolkit.dll` left the old file on disk forever, and pressing "Reinstall live sensor" reported success while changing nothing. Game Link now classifies the installed file by its sha256 against a checked-in manifest and replaces a missing or known-superseded copy in place -- a copy from another tool it does not recognise is left alone and reported, never overwritten.
+**Updating the Tracker now updates the loader in your game folder too.** Before, the loader was installed once and never touched again: a newer Tracker brought a newer loader, but the old one stayed in your game folder, and "Reinstall live sensor" said it worked while changing nothing. Settings > Game link now tells you when the installed loader is an older build, and Reinstall live sensor replaces it. A loader it does not recognise, for example a newer one from another tool, is left alone and reported, never overwritten.
 
-**The bundled binaries are verified before they ship.** A new check hashes `aurie-loader/`'s three binaries against the same manifest the installer reads, and confirms every loader resource `tauri.conf.json` bundles actually exists on disk -- so a wrong or partial file is caught before packaging, not as a fail-closed sensor at runtime or a late, confusing Tauri error.
+**Every build is checked before it ships.** The mod loader files in a release are now checked against a list of their expected fingerprints, so a wrong or incomplete file stops the release instead of reaching you as a sensor that silently refuses to start.
 
 ## Install
 
-Run the setup, open Settings > Game link, press Install, then start Hero Siege. If the game folder has no mod loader the tracker installs one for you; if it already has an older one, Install now brings it up to date instead of leaving it as-is. The portable zip is the same program without an installer; keep the `producer` and `aurie-loader` folders next to the exe.
+Run the setup, open Settings > Game link, press Install, then start Hero Siege. If the game folder has no mod loader, the Tracker installs one for you. If it has the older one, Settings says so, and Reinstall live sensor brings it up to date. The portable zip is the same program without an installer; keep the `producer` and `aurie-loader` folders next to the exe.
 
 ## Notes
+
+If you also use ForgePact, use version 1.4.4 or newer: it ships the same loader. Both tools install the loader into the same place, so installing an older ForgePact after this puts the old loader back. Reinstall live sensor fixes that.
 
 Magic find is still not shown: the game's stat routine cannot be observed on this build without destabilising it. The sensor only reads; it never writes to the game.
 
