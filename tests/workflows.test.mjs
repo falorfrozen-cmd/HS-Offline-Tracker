@@ -253,6 +253,17 @@ test('tracker-release.yml: two draft guards, before checkout and immediately bef
   assert.match(t, /if: \$\{\{ !inputs\.dry_run \}\}/);
 });
 
+test('tracker-release.yml: an independent reader opens the zip after packaging and before any upload', () => {
+  const t = text('tracker-release.yml');
+  const packageAt = t.indexOf('package-release.mjs');
+  const checkAt = t.indexOf('[System.IO.Compression.ZipFile]::OpenRead');
+  const keepAt = t.indexOf('- name: Keep the artefacts on a dry run');
+  const uploadAt = t.indexOf('- name: Upload to the draft');
+  assert.notEqual(checkAt, -1, 'the .NET zip check is missing');
+  assert.ok(packageAt < checkAt, 'the zip check must run after packaging');
+  assert.ok(checkAt < keepAt && checkAt < uploadAt, 'the zip check must run before the zip is kept or uploaded');
+});
+
 test('tracker-release.yml: build order -- ci, tool tests, rust tests, loader verify, frontend, bundle, package', () => {
   const lines = codeLines(text('tracker-release.yml'));
   const idx = (needle) => lines.findIndex((l) => l.includes(needle));

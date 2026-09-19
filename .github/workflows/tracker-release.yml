@@ -201,6 +201,29 @@ jobs:
           echo "sums_path=$sums_path" >> "$GITHUB_OUTPUT"
           echo "zip_hash=$(sha256sum "$zip_path" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
+      # Open the zip with a reader that is not ours before anything is kept or
+      # uploaded. The packager's own tests read zips with a reader that shares
+      # the writer's idea of the layout, and the v0.1.3 draft's zip passed
+      # them while every real unzip tool rejected it. .NET's ZipFile follows
+      # the recorded central-directory offset and reads every entry here, so a
+      # wrong offset or a truncated entry fails this step by name.
+      - name: The zip opens in an independent reader
+        shell: pwsh
+        env:
+          ZIP_PATH: ${{ steps.package.outputs.zip_path }}
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($env:ZIP_PATH)
+          try {
+            foreach ($entry in $zip.Entries) {
+              $stream = $entry.Open()
+              try { $stream.CopyTo([System.IO.Stream]::Null) } finally { $stream.Dispose() }
+            }
+            $names = $zip.Entries.FullName
+            if ($names -notcontains 'hs-offline-tracker.exe') { throw "hs-offline-tracker.exe is not at the zip root: $($names -join ', ')" }
+            Write-Host "$($zip.Entries.Count) entries read: $($names -join ', ')"
+          } finally { $zip.Dispose() }
+
       # A dry run never touches the draft; the built artefacts are only kept
       # as downloadable workflow artifacts so they can be inspected without
       # re-running.
