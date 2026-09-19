@@ -132,7 +132,11 @@ export function buildZip(entries) {
   eocd.writeUInt16LE(entries.length, 10);
   eocd.writeUInt32LE(central.length, 12);
   eocd.writeUInt32LE(centralStart, 16);
-  eocd.writeUInt16LE(0, 18);
+  // Comment length lives at 20. It is already zero from Buffer.alloc, and
+  // writing it at 18 -- as this once did -- overwrote the top half of the
+  // central-directory offset, so every zip over 64 KiB (the v0.1.3 draft's
+  // among them) recorded an offset readers could not follow.
+  eocd.writeUInt16LE(0, 20);
 
   return Buffer.concat([...localParts, central, eocd]);
 }
@@ -153,6 +157,16 @@ export function readZipEntries(buf) {
 
   const count = buf.readUInt16LE(eocdOffset + 10);
   const centralStart = buf.readUInt32LE(eocdOffset + 16);
+  const centralSize = buf.readUInt32LE(eocdOffset + 12);
+  // Cross-check the recorded offset instead of trusting it: this reader shares
+  // the writer's idea of the layout, so without this a writer bug in the
+  // end record round-trips cleanly and only a real unzip tool notices.
+  if (centralStart + centralSize !== eocdOffset) {
+    throw new Error(
+      `end-of-central-directory record says the central directory is ${centralSize} bytes at ${centralStart}, ` +
+        `but it ends at ${eocdOffset}`,
+    );
+  }
 
   const entries = [];
   let p = centralStart;
