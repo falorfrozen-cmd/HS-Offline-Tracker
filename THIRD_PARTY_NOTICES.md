@@ -81,11 +81,14 @@ sensor** in Settings. A clean copy of the game executable is kept as
 - Project: YYToolkit
 - Upstream repository: <https://github.com/AurieFramework/YYToolkit>
 - License: AGPL-3.0
-- File: `YYToolkit.dll` — built from YYToolkit with **two modified source
-  files** (a startup-time disk cache for the runner-interface lookup, and the
-  `ExecuteIt` hook left uninstalled). The modified files and the build notes
-  are in [aurie-loader/yytoolkit-modified/](aurie-loader/yytoolkit-modified/),
-  which together with the upstream repository form the corresponding source.
+- File: `YYToolkit.dll` (series revision `hs.1`, sha256
+  `51a393d7e5291ad76bdb85b9f44faf5178b6b20e0ce8432fa26bdaf9e21eadf8`) — built
+  from a seven-patch series against upstream, maintained in the
+  `hero-siege-offline-toolkit` hub repository's `third_party/yytoolkit/`
+  directory rather than as source files in this repository.
+  [aurie-loader/yytoolkit-modified/NOTICE.md](aurie-loader/yytoolkit-modified/NOTICE.md)
+  names the exact hub commit and patch set and, together with the hub
+  repository at that commit, is the corresponding source.
 
 The live sensor (`aurie-producer`) links against the Aurie and YYToolkit
 headers. Both the sensor and the loader files are separate binaries from the
