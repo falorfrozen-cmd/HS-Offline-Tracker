@@ -39,6 +39,11 @@ flate2 = "1"
 form_urlencoded = "1"
 sysinfo = "0.33"
 discord-rich-presence = "1.1.0"
+# Classifies an installed aurie-loader/YYToolkit.dll against loader-manifest.json
+# (missing / current / superseded / unknown). Already a transitive dependency
+# of tauri-codegen and wry at 0.10.9, so promoting it to a direct one needs no
+# new fetch on a checkout that has already resolved this workspace's deps.
+sha2 = "0.10"
 
 # autostart is a registry value on Windows and a .desktop file elsewhere
 [target.'cfg(windows)'.dependencies]

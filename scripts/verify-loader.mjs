@@ -58,7 +58,33 @@ for (const entry of manifest.files) {
   checked.push(entry.path);
 }
 
-// 2. Every aurie-loader/ source path tauri.conf.json's bundle.resources
+// 2. Each entry's `supersedes` list — the hashes of earlier releases of that
+// same file src-tauri's installer will replace on an existing installation
+// (see the classification rule in lib.rs and the manifest's own _comment) —
+// must be shaped so that list can be trusted without a live game to test
+// against: every entry is a 64-character hex sha256, and none of them is the
+// file's own current hash (that would make a "superseded" copy indistinguishable
+// from "current", silently skipping the update it names). Checked against the
+// manifest itself, independent of loaderDir or whether the files exist.
+const SHA256_RE = /^[0-9a-f]{64}$/i;
+for (const entry of manifest.files) {
+  const supersedes = entry.supersedes ?? [];
+  if (!Array.isArray(supersedes)) {
+    failures.push(`${entry.path}: "supersedes" is not an array`);
+    continue;
+  }
+  for (const hash of supersedes) {
+    if (typeof hash !== 'string' || !SHA256_RE.test(hash)) {
+      failures.push(`${entry.path}: "supersedes" entry ${JSON.stringify(hash)} is not a 64-character hex sha256`);
+      continue;
+    }
+    if (hash.toLowerCase() === entry.sha256.toLowerCase()) {
+      failures.push(`${entry.path}: "supersedes" lists its own current sha256 (${hash}) — that hash would never be replaced`);
+    }
+  }
+}
+
+// 3. Every aurie-loader/ source path tauri.conf.json's bundle.resources
 // lists must exist on disk. Scoped to aurie-loader/ rather than every
 // resource: other entries (the producer DLL, most of all) are build output
 // from a separate, native toolchain this script has no part in and that a
