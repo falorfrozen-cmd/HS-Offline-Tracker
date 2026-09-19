@@ -92,6 +92,17 @@ executable, so the sensor never loads there (the page says so when it sees EAC
 files), and the backup reverts the patch either way. The loader files ship in
 `aurie-loader/` (AGPL-3.0, see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
+On an installation that already has the loader and a patched executable,
+**Reinstall live sensor** does not re-run `AuriePatcher.exe` — it only checks
+`mods/aurie/YYToolkit.dll` against `aurie-loader/loader-manifest.json` (the same
+manifest `npm run loader:verify` checks the bundled binaries against, read by
+`src-tauri` at compile time) and classifies it as current, an earlier release
+this bundle knows to safely replace ("superseded"), or unrecognized. A current
+copy is left alone; a superseded one is updated in place; an unrecognized one —
+which may be a newer loader another tool installed — is left alone too, and
+**Settings > Game link** says which of the three it saw so an update is never
+silent and never a downgrade.
+
 The sensor resolves the game's routines by name, so it keeps working after game
 updates; the status lines on that page say whether the game is seen, the loader
 is in place, the sensor is installed and events are flowing. Live magic find is

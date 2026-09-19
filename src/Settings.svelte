@@ -202,7 +202,7 @@
     <div class="line" data-tauri-drag-region>
       <span class="name">Mod loader</span>
       <span class="opt" class:ok={producer?.loader_ready} class:muted={!producer?.loader_ready}>
-        {#if !producer?.game_dir}—{:else if producer.loader_ready}Aurie ready{:else}missing (AurieCore {producer.aurie ? '✓' : '✗'}, YYToolkit {producer.yytk ? '✓' : '✗'}, exe patched {producer.patched ? '✓' : '✗'}) — Install sets it up{/if}
+        {#if !producer?.game_dir}—{:else if !producer.loader_ready}missing (AurieCore {producer.aurie ? '✓' : '✗'}, YYToolkit {producer.yytk ? '✓' : '✗'}, exe patched {producer.patched ? '✓' : '✗'}) — Install sets it up{:else if producer.yytk_state === 'superseded'}Aurie ready — YYToolkit.dll is an older build; Reinstall live sensor will update it{:else if producer.yytk_state === 'unknown'}Aurie ready — YYToolkit.dll is not recognized (maybe a newer loader from another tool); left alone{:else}Aurie ready{/if}
       </span>
     </div>
     <div class="line" data-tauri-drag-region>
@@ -217,7 +217,7 @@
         style:--btn-down="url({art('button_down')})"
         disabled={installing || !producer?.bundled || !producer?.game_dir || producer?.game_up || (!producer?.loader_ready && !producer?.loader_bundled)}
         onclick={installSensor}
-        title="Sets up the Aurie/YYToolkit mod loader when the game does not have it (AurieCore.dll beside the game, YYToolkit.dll in mods\aurie, Hero_Siege.exe patched; a clean copy is kept as Hero_Siege.exe.aurie_backup), then copies HSOfflineTrackerProducer.dll into mods\aurie."
+        title="Sets up the Aurie/YYToolkit mod loader when the game does not have it (AurieCore.dll beside the game, YYToolkit.dll in mods\aurie, Hero_Siege.exe patched; a clean copy is kept as Hero_Siege.exe.aurie_backup), then copies HSOfflineTrackerProducer.dll into mods\aurie. On an existing installation, a YYToolkit.dll this build recognizes as an older release is updated too, without re-patching the executable; one it does not recognize is left alone."
       >{installing ? 'Installing…' : !producer?.loader_ready ? 'Install mod loader + live sensor' : producer?.installed ? (producer?.installed_current ? 'Reinstall live sensor' : 'Update live sensor') : 'Install live sensor'}</button>
       <button
         class="btn"
@@ -230,6 +230,8 @@
       >Pick Hero_Siege.exe…</button>
       {#if producer?.game_up}<span class="opt muted">close the game to install</span>{/if}
       {#if producer?.eac && !producer?.loader_ready}<span class="opt muted">EAC files present: fine on an offline copy, but a live Steam/EAC install will not load the sensor</span>{/if}
+      {#if producer?.loader_ready && producer?.yytk_state === 'superseded'}<span class="opt muted">stale YYToolkit.dll detected — Reinstall live sensor will update it</span>{/if}
+      {#if producer?.loader_ready && producer?.yytk_state === 'unknown'}<span class="opt muted">YYToolkit.dll not recognized — left alone in case it's a newer loader from another tool</span>{/if}
       {#if installNotice}<span class="opt">{installNotice}</span>{/if}
     </div>
     <div class="hint" data-tauri-drag-region>

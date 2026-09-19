@@ -3362,6 +3362,85 @@ const GAME_EXE_NAME: &str = "Hero_Siege.exe";
 const AURIE_BACKUP_SUFFIX: &str = ".aurie_backup";
 const PATCHER_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// The same manifest `scripts/verify-loader.mjs` checks the bundled binaries
+/// against, embedded at compile time so an installed app carries it with no
+/// extra resource and Rust can never read a different copy than the check
+/// did. One source of truth for "what is the bundled hash" and "what earlier
+/// releases does replacing it not risk a downgrade".
+const LOADER_MANIFEST_JSON: &str = include_str!("../../aurie-loader/loader-manifest.json");
+
+#[derive(Deserialize)]
+struct LoaderManifestFile {
+    path: String,
+    sha256: String,
+    #[serde(default)]
+    supersedes: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct LoaderManifest {
+    files: Vec<LoaderManifestFile>,
+}
+
+/// Parses the embedded manifest. Never fails on a real build: the file ships
+/// in this same tree and `loader_tests::the_real_manifest_matches_the_bundled_yytoolkit_dll`
+/// pins its shape, so a parse failure here means the checked-in JSON itself
+/// is broken, which is a build-time defect worth a panic rather than a
+/// silently unprotected installer.
+fn loader_manifest() -> LoaderManifest {
+    serde_json::from_str(LOADER_MANIFEST_JSON)
+        .expect("aurie-loader/loader-manifest.json failed to parse")
+}
+
+fn manifest_entry<'m>(manifest: &'m LoaderManifest, name: &str) -> Option<&'m LoaderManifestFile> {
+    manifest.files.iter().find(|f| f.path == name)
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut f = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut f, &mut hasher).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// What an installed loader binary is, relative to what this bundle ships:
+/// present but not on disk at all, exactly the bundled build, an earlier
+/// release this bundle is documented to safely replace, or something this
+/// manifest says nothing about — maybe a newer loader another tool put
+/// there. Only `Missing` and `Superseded` are ever replaced; `Unknown` is
+/// left alone and reported, never overwritten on a guess.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum LoaderFileState {
+    Missing,
+    Current,
+    Superseded,
+    Unknown,
+}
+
+/// Classifies `installed` (already known to exist, or `None`) against a
+/// single manifest entry. Takes the entry rather than looking it up itself
+/// so it can be exercised against small synthetic files and a synthetic
+/// manifest in tests, without touching the real bundled binaries.
+fn classify_loader_file(installed: Option<&Path>, entry: &LoaderManifestFile) -> LoaderFileState {
+    let Some(path) = installed else {
+        return LoaderFileState::Missing;
+    };
+    let Ok(actual) = sha256_file(path) else {
+        // unreadable (e.g. locked) is not the same claim as "known stale" —
+        // treat it like any other hash this manifest says nothing about
+        return LoaderFileState::Unknown;
+    };
+    if actual.eq_ignore_ascii_case(&entry.sha256) {
+        LoaderFileState::Current
+    } else if entry.supersedes.iter().any(|old| old.eq_ignore_ascii_case(&actual)) {
+        LoaderFileState::Superseded
+    } else {
+        LoaderFileState::Unknown
+    }
+}
+
 /// What the settings page needs to say whether live numbers can arrive: is the
 /// game seen, does it carry the loader, is the sensor beside it, is it talking.
 #[derive(Serialize)]
@@ -3372,11 +3451,18 @@ pub struct ProducerStatus {
     exe_present: bool,
     /// AurieCore.dll beside the executable
     aurie: bool,
-    /// mods/aurie/YYToolkit.dll
+    /// mods/aurie/YYToolkit.dll is present — says nothing about which build
     yytk: bool,
+    /// Missing / current / superseded (a stale build this bundle is known to
+    /// safely replace) / unknown (present, but not a hash this manifest
+    /// recognizes — maybe a newer loader another tool installed; installing
+    /// leaves it alone rather than guessing). `yytk` above only answers
+    /// "is a file there"; this answers "is it the one this build ships".
+    yytk_state: LoaderFileState,
     /// the executable carries the `.aurie` section, so it loads AurieCore.dll
     patched: bool,
-    /// all three above: the game will load the sensor
+    /// all three above: the game will load the sensor. Note this is "the
+    /// loader is present", not "the loader is current" — see `yytk_state`.
     loader_ready: bool,
     /// looks like a Steam/EAC install: a warning, the backup makes it reversible
     eac: bool,
@@ -3711,6 +3797,73 @@ fn run_patcher(patcher: &Path, exe: &Path, core: &Path) -> Result<String, String
     }
 }
 
+/// The presence and freshness of `mods/aurie/YYToolkit.dll` under `dir`
+/// (`None` when the game has not been seen, matching every other status
+/// field). Free of `AppHandle` so it can be exercised directly in tests, and
+/// used by both `producer_status` and the installer so they never disagree.
+fn yytoolkit_status(dir: Option<&Path>, manifest: &LoaderManifest) -> (bool, LoaderFileState) {
+    let Some(entry) = manifest_entry(manifest, YYTOOLKIT) else {
+        return (false, LoaderFileState::Unknown);
+    };
+    let target = dir.map(|d| d.join("mods").join("aurie").join(YYTOOLKIT));
+    let present = target.as_deref().is_some_and(Path::is_file);
+    let state = classify_loader_file(target.as_deref().filter(|_| present), entry);
+    (present, state)
+}
+
+/// Brings `target` (`mods/aurie/YYToolkit.dll`) in line with what this bundle
+/// ships, without touching anything else — no patcher run, no AurieCore.dll
+/// write, no game executable involved. A `Missing` or `Superseded` copy is
+/// replaced atomically via `place` (same convention as every other loader
+/// binary: a verified temp file renamed over the target, no separate backup —
+/// `place` itself already skips the write when the bytes already match, and
+/// that is this file's only backup-equivalent history kept). `Unknown` is
+/// left on disk untouched and reported, in case it is a newer loader another
+/// tool installed; `Current` needs nothing at all.
+fn apply_yytoolkit_update(
+    source: &Path,
+    target: &Path,
+    entry: &LoaderManifestFile,
+    steps: &mut Vec<String>,
+) -> Result<(), String> {
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    let installed = target.is_file().then_some(target);
+    match classify_loader_file(installed, entry) {
+        LoaderFileState::Missing => {
+            place(source, target)?;
+            steps.push(format!("{YYTOOLKIT} placed in mods\\aurie"));
+        }
+        LoaderFileState::Superseded => {
+            place(source, target)?;
+            steps.push(format!("{YYTOOLKIT} updated in mods\\aurie (a superseded copy was replaced)"));
+        }
+        LoaderFileState::Current => {}
+        LoaderFileState::Unknown => {
+            steps.push(format!(
+                "{YYTOOLKIT} in mods\\aurie is not a build this installer recognizes — left alone (it may be a newer loader from another tool)"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Updates only `mods/aurie/YYToolkit.dll` when the rest of the loader (Aurie
+/// beside the game, the executable already patched) is already in place —
+/// the "reinstall live sensor while the game link is already set up" path.
+/// Never runs AuriePatcher: patching only happens in `install_loader`, and
+/// this function is only reached instead of that one.
+fn refresh_yytoolkit(app: &AppHandle, dir: &Path, steps: &mut Vec<String>) -> Result<(), String> {
+    let yytk_src = bundled_loader_file(app, YYTOOLKIT)
+        .ok_or_else(|| format!("This build does not carry {YYTOOLKIT}, so it cannot check the mod loader."))?;
+    let manifest = loader_manifest();
+    let entry = manifest_entry(&manifest, YYTOOLKIT)
+        .ok_or_else(|| "aurie-loader/loader-manifest.json has no entry for YYToolkit.dll".to_string())?;
+    let target = dir.join("mods").join("aurie").join(YYTOOLKIT);
+    apply_yytoolkit_update(&yytk_src, &target, entry, steps)
+}
+
 /// Puts the Aurie/YYToolkit loader in place the way ForgePact does:
 /// AurieCore.dll beside the game, YYToolkit.dll under mods/aurie, and the
 /// executable patched to load the core — after a verified clean backup, and
@@ -3733,9 +3886,10 @@ fn install_loader(app: &AppHandle, dir: &Path, steps: &mut Vec<String>) -> Resul
     for folder in [mods.clone(), dir.join("mods").join("native")] {
         std::fs::create_dir_all(&folder).map_err(|e| format!("cannot create {}: {e}", folder.display()))?;
     }
-    if place(&yytk_src, &mods.join(YYTOOLKIT))? {
-        steps.push(format!("{YYTOOLKIT} placed in mods\\aurie"));
-    }
+    let manifest = loader_manifest();
+    let yytk_entry = manifest_entry(&manifest, YYTOOLKIT)
+        .ok_or_else(|| "aurie-loader/loader-manifest.json has no entry for YYToolkit.dll".to_string())?;
+    apply_yytoolkit_update(&yytk_src, &mods.join(YYTOOLKIT), yytk_entry, steps)?;
     if exe_is_patched(&exe) {
         return Ok(());
     }
@@ -3779,13 +3933,15 @@ fn producer_status(app: AppHandle) -> ProducerStatus {
             .zip(bundled.as_ref())
             .is_some_and(|(a, b)| same_contents(a, b));
     let aurie = dir.as_ref().is_some_and(|d| d.join(AURIE_CORE).is_file());
-    let yytk = dir.as_ref().is_some_and(|d| d.join("mods").join("aurie").join(YYTOOLKIT).is_file());
+    let manifest = loader_manifest();
+    let (yytk, yytk_state) = yytoolkit_status(dir.as_deref(), &manifest);
     let patched = dir.as_ref().is_some_and(|d| exe_is_patched(&d.join(GAME_EXE_NAME)));
     ProducerStatus {
         game_exe: game_exe.map(|p| p.to_string_lossy().into_owned()),
         exe_present: dir.as_ref().is_some_and(|d| d.join(GAME_EXE_NAME).is_file()),
         aurie,
         yytk,
+        yytk_state,
         patched,
         loader_ready: aurie && yytk && patched,
         eac: dir.as_ref().is_some_and(|d| eac_protected(d)),
@@ -3808,6 +3964,14 @@ fn producer_status(app: AppHandle) -> ProducerStatus {
 /// previous copy of the sensor is kept beside the new one. Off the main
 /// thread, because the backup and the patch of a 300 MB executable take a
 /// while and the windows must keep drawing.
+///
+/// When the loader is already present and the executable already patched,
+/// this does not run `install_loader` (and so never re-runs AuriePatcher on
+/// an executable that does not need it) — it only checks whether
+/// `mods/aurie/YYToolkit.dll` itself is stale and updates it in place via
+/// `refresh_yytoolkit` if so. That is what makes "Reinstall live sensor" on
+/// an existing installation pick up a newer bundled YYToolkit.dll instead of
+/// leaving the one from the previous install in the game's mods folder.
 #[tauri::command(async)]
 fn install_producer(app: AppHandle) -> Result<String, String> {
     let dir = game_dir().ok_or_else(|| {
@@ -3819,7 +3983,9 @@ fn install_producer(app: AppHandle) -> Result<String, String> {
     let source = bundled_producer(&app)
         .ok_or_else(|| "This build does not carry the live sensor file.".to_string())?;
     let mut steps = Vec::new();
-    if !loader_ready(&dir) {
+    if loader_ready(&dir) {
+        refresh_yytoolkit(&app, &dir, &mut steps)?;
+    } else {
         install_loader(&app, &dir, &mut steps)?;
     }
     let mods = dir.join("mods").join("aurie");
@@ -4213,5 +4379,268 @@ mod loader_tests {
         assert!(exe_is_patched(&exe));
         assert!(!exe_is_patched(&backup));
         assert_eq!(same_aurie_base(&exe, &backup), Ok(()));
+    }
+
+    // ---- stale-loader classification & update (no blind overwrite) --------
+    //
+    // Reported: this bundle replaced aurie-loader/YYToolkit.dll (a new hash),
+    // but install_producer only ever called install_loader when
+    // !loader_ready(dir), and loader_ready only checked that the file
+    // *existed* and the executable was patched — so an existing installation
+    // choosing "Reinstall live sensor" kept the old DLL forever. These tests
+    // exercise classify_loader_file, apply_yytoolkit_update and
+    // yytoolkit_status directly with small synthetic files: the decision is
+    // made from a sha256 comparison against a manifest passed in as a
+    // parameter, so it needs no real ~900 KB loader binary to prove.
+
+    #[test]
+    fn classify_loader_file_covers_every_state() {
+        let dir = scratch("classify");
+        let bundled_bytes = b"bundled yytoolkit v2 bytes";
+        let old_bytes = b"old yytoolkit v1 bytes (bb113eef-like)";
+        let unknown_bytes = b"some other tool's yytoolkit bytes";
+
+        let bundled_path = dir.join("bundled.bin");
+        std::fs::write(&bundled_path, bundled_bytes).unwrap();
+        let bundled_hash = sha256_file(&bundled_path).unwrap();
+
+        let old_path = dir.join("old.bin");
+        std::fs::write(&old_path, old_bytes).unwrap();
+        let old_hash = sha256_file(&old_path).unwrap();
+
+        let entry = LoaderManifestFile {
+            path: YYTOOLKIT.to_string(),
+            sha256: bundled_hash.clone(),
+            supersedes: vec![old_hash.clone()],
+        };
+
+        // positive control: Missing — no installed file at all
+        assert_eq!(classify_loader_file(None, &entry), LoaderFileState::Missing);
+
+        let installed = dir.join("installed.dll");
+
+        // positive control: Current — installed bytes match the bundled hash
+        std::fs::write(&installed, bundled_bytes).unwrap();
+        assert_eq!(classify_loader_file(Some(&installed), &entry), LoaderFileState::Current);
+
+        // positive control: Superseded — installed bytes match a hash this
+        // manifest documents as safe to replace
+        std::fs::write(&installed, old_bytes).unwrap();
+        assert_eq!(classify_loader_file(Some(&installed), &entry), LoaderFileState::Superseded);
+
+        // negative control: Unknown — installed bytes match neither the
+        // bundled hash nor anything in `supersedes` (maybe a newer loader
+        // another tool installed; never replaced on a guess)
+        std::fs::write(&installed, unknown_bytes).unwrap();
+        assert_eq!(classify_loader_file(Some(&installed), &entry), LoaderFileState::Unknown);
+
+        // negative control: an entry with an *empty* supersedes list must
+        // never call anything Superseded, including bytes that some other
+        // entry's list would recognize
+        let entry_no_supersedes = LoaderManifestFile {
+            path: AURIE_CORE.to_string(),
+            sha256: bundled_hash,
+            supersedes: vec![],
+        };
+        std::fs::write(&installed, old_bytes).unwrap();
+        assert_eq!(
+            classify_loader_file(Some(&installed), &entry_no_supersedes),
+            LoaderFileState::Unknown,
+            "an empty supersedes list must not classify anything as superseded"
+        );
+    }
+
+    /// (d) Missing loader — the owner's positive control: existing behaviour
+    /// (place the bundled file, report it) is unchanged.
+    #[test]
+    fn apply_yytoolkit_update_places_a_missing_file() {
+        let dir = scratch("apply-missing");
+        let source = dir.join("source.dll");
+        std::fs::write(&source, b"bundled bytes").unwrap();
+        let entry = LoaderManifestFile {
+            path: YYTOOLKIT.to_string(),
+            sha256: sha256_file(&source).unwrap(),
+            supersedes: vec![],
+        };
+        let target = dir.join("mods").join("aurie").join(YYTOOLKIT);
+        let mut steps = Vec::new();
+        assert_eq!(apply_yytoolkit_update(&source, &target, &entry, &mut steps), Ok(()));
+        assert!(target.is_file());
+        assert!(same_contents(&source, &target));
+        assert_eq!(steps.len(), 1);
+        assert!(steps[0].contains("placed"), "steps: {steps:?}");
+    }
+
+    /// (b) Current loader — zero loader writes: the `Current` branch never
+    /// calls `place`, so nothing is written and no step is reported.
+    #[test]
+    fn apply_yytoolkit_update_leaves_a_current_file_untouched() {
+        let dir = scratch("apply-current");
+        let source = dir.join("source.dll");
+        std::fs::write(&source, b"bundled bytes").unwrap();
+        let entry = LoaderManifestFile {
+            path: YYTOOLKIT.to_string(),
+            sha256: sha256_file(&source).unwrap(),
+            supersedes: vec![],
+        };
+        let target = dir.join("mods").join("aurie").join(YYTOOLKIT);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, b"bundled bytes").unwrap();
+        let mut steps = Vec::new();
+        assert_eq!(apply_yytoolkit_update(&source, &target, &entry, &mut steps), Ok(()));
+        assert!(steps.is_empty(), "a current loader must not be touched: {steps:?}");
+        assert_eq!(std::fs::read(&target).unwrap(), b"bundled bytes");
+    }
+
+    /// (c) Unknown loader — left alone, byte-for-byte, and the step says so
+    /// rather than silently overwriting what might be a newer loader another
+    /// tool installed.
+    #[test]
+    fn apply_yytoolkit_update_leaves_an_unrecognized_file_untouched() {
+        let dir = scratch("apply-unknown");
+        let source = dir.join("source.dll");
+        std::fs::write(&source, b"bundled bytes").unwrap();
+        let entry = LoaderManifestFile {
+            path: YYTOOLKIT.to_string(),
+            sha256: sha256_file(&source).unwrap(),
+            supersedes: vec![],
+        };
+        let target = dir.join("mods").join("aurie").join(YYTOOLKIT);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, b"a newer loader from a different tool").unwrap();
+        let mut steps = Vec::new();
+        assert_eq!(apply_yytoolkit_update(&source, &target, &entry, &mut steps), Ok(()));
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"a newer loader from a different tool",
+            "an unrecognized loader must be left byte-for-byte alone"
+        );
+        assert_eq!(steps.len(), 1);
+        let step = steps[0].to_lowercase();
+        assert!(step.contains("not") && step.contains("left alone"), "steps: {steps:?}");
+    }
+
+    /// (a) REGRESSION — the reported defect: an existing installation with
+    /// the old loader bytes present and the executable already patched.
+    /// `loader_ready` (unchanged: presence + patched, nothing about which
+    /// build) still reports true for this shape — that is exactly the
+    /// condition that used to make `install_producer` skip `install_loader`
+    /// and so skip YYToolkit.dll entirely. Now that route calls
+    /// `apply_yytoolkit_update` instead (see `refresh_yytoolkit` /
+    /// `install_producer`), which updates the superseded DLL to the bundled
+    /// bytes, reports the update step, and — structurally, since this
+    /// function never references the executable or AuriePatcher at all —
+    /// never re-runs the patcher; the exe and AurieCore.dll are proven
+    /// byte-identical before and after.
+    #[test]
+    fn regression_an_existing_patched_install_with_a_superseded_yytoolkit_is_updated_without_repatching() {
+        let root = scratch("regression");
+        let game_dir = root.join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        let exe = game_dir.join(GAME_EXE_NAME);
+        std::fs::write(&exe, synthetic_pe(PATCHED)).unwrap();
+        std::fs::write(game_dir.join(AURIE_CORE), b"aurie core bytes").unwrap();
+        let yytk_target = game_dir.join("mods").join("aurie").join(YYTOOLKIT);
+        std::fs::create_dir_all(yytk_target.parent().unwrap()).unwrap();
+        let old_bytes = b"old yytoolkit bytes (the pre-hs.1 build)";
+        std::fs::write(&yytk_target, old_bytes).unwrap();
+
+        // this is the exact shape that used to make install_producer skip
+        // install_loader — and therefore skip YYToolkit.dll — entirely
+        assert!(
+            loader_ready(&game_dir),
+            "setup must reproduce the pre-fix loader_ready(true) scenario"
+        );
+
+        let source = root.join("bundled_yytoolkit.dll");
+        let bundled_bytes = b"new bundled yytoolkit hs.1 bytes";
+        std::fs::write(&source, bundled_bytes).unwrap();
+        let entry = LoaderManifestFile {
+            path: YYTOOLKIT.to_string(),
+            sha256: sha256_file(&source).unwrap(),
+            supersedes: vec![sha256_file(&yytk_target).unwrap()],
+        };
+
+        let exe_before = std::fs::read(&exe).unwrap();
+        let core_before = std::fs::read(game_dir.join(AURIE_CORE)).unwrap();
+
+        let mut steps = Vec::new();
+        assert_eq!(apply_yytoolkit_update(&source, &yytk_target, &entry, &mut steps), Ok(()));
+
+        // the DLL is now the bundled build
+        assert_eq!(std::fs::read(&yytk_target).unwrap(), bundled_bytes);
+        assert_eq!(steps.len(), 1);
+        let step = steps[0].to_lowercase();
+        assert!(step.contains("updated") && step.contains("superseded"), "steps: {steps:?}");
+
+        // and nothing the patcher would have touched changed
+        assert_eq!(std::fs::read(&exe).unwrap(), exe_before, "the game executable must not be rewritten by a DLL-only update");
+        assert!(exe_is_patched(&exe));
+        assert_eq!(std::fs::read(game_dir.join(AURIE_CORE)).unwrap(), core_before);
+    }
+
+    /// (f) Status distinguishes "present" from "current": `yytk` (present)
+    /// is true for both a current and a superseded copy, but `yytk_state`
+    /// tells them apart — and absent entirely, or no game directory seen
+    /// yet, both classify as Missing.
+    #[test]
+    fn yytoolkit_status_distinguishes_present_from_current() {
+        let dir = scratch("status");
+        let bundled_bytes = b"bundled bytes for status test";
+        let old_bytes = b"old bytes for status test";
+
+        let hash_of = |bytes: &[u8]| {
+            let p = dir.join("hash_scratch.bin");
+            std::fs::write(&p, bytes).unwrap();
+            sha256_file(&p).unwrap()
+        };
+        let manifest = LoaderManifest {
+            files: vec![LoaderManifestFile {
+                path: YYTOOLKIT.to_string(),
+                sha256: hash_of(bundled_bytes),
+                supersedes: vec![hash_of(old_bytes)],
+            }],
+        };
+
+        let yytk_target = dir.join("mods").join("aurie").join(YYTOOLKIT);
+        std::fs::create_dir_all(yytk_target.parent().unwrap()).unwrap();
+
+        // present, current
+        std::fs::write(&yytk_target, bundled_bytes).unwrap();
+        assert_eq!(yytoolkit_status(Some(&dir), &manifest), (true, LoaderFileState::Current));
+
+        // present, but superseded — same "present" bit, different state
+        std::fs::write(&yytk_target, old_bytes).unwrap();
+        let (present, state) = yytoolkit_status(Some(&dir), &manifest);
+        assert!(present, "a superseded copy is still a present one");
+        assert_eq!(state, LoaderFileState::Superseded);
+
+        // absent entirely
+        std::fs::remove_file(&yytk_target).unwrap();
+        assert_eq!(yytoolkit_status(Some(&dir), &manifest), (false, LoaderFileState::Missing));
+
+        // no game directory seen yet
+        assert_eq!(yytoolkit_status(None, &manifest), (false, LoaderFileState::Missing));
+    }
+
+    /// The embedded manifest is the one thing tying this bundle's replacement
+    /// DLL to the exact hash the bug report named — pins both ends: the
+    /// manifest's claims, and the real file on disk actually hashing to what
+    /// the manifest says it does.
+    #[test]
+    fn the_real_manifest_matches_the_bundled_yytoolkit_dll() {
+        let manifest = loader_manifest();
+        let entry = manifest_entry(&manifest, YYTOOLKIT).expect("manifest has a YYToolkit.dll entry");
+        assert_eq!(
+            entry.sha256.to_lowercase(),
+            "51a393d7e5291ad76bdb85b9f44faf5178b6b20e0ce8432fa26bdaf9e21eadf8"
+        );
+        assert_eq!(
+            entry.supersedes.iter().map(|h| h.to_lowercase()).collect::<Vec<_>>(),
+            vec!["bb113eefc9a5d485231ced1dc85d773dbc6b762ee680214851c56541359ad297".to_string()]
+        );
+        let dll = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("aurie-loader").join(YYTOOLKIT);
+        let actual = sha256_file(&dll).expect("aurie-loader/YYToolkit.dll must be readable");
+        assert_eq!(actual, entry.sha256.to_lowercase(), "the bundled DLL no longer hashes to what the manifest claims");
     }
 }
