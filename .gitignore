@@ -8,6 +8,10 @@ src-tauri/gen/schemas/
 
 # local build products, experiments and safety backups
 aurie-producer/build/
+# scripts/fetch-producer-sdk.mjs's default destination for the pinned,
+# AGPL-3.0 headers aurie-producer/ needs to compile -- see
+# aurie-producer/toolchain-pins.json. Never ours to commit.
+aurie-producer/.sdk/
 bridge-native/build/
 _backups/
 _tmp_*/

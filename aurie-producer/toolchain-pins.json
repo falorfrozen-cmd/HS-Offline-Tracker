@@ -1,0 +1,47 @@
+{
+  "$schema_note": "Consumed by scripts/fetch-producer-sdk.mjs. One entry per header aurie-producer/CMakeLists.txt needs, dest relative to the root the caller passes (default aurie-producer/.sdk/). These headers are AGPL-3.0 -- fetched at build time, verified by sha256, and never committed. Mirrors ForgePact/tools/toolchain-pins.json's plugin_build/include/ entries; the two must never disagree about what these headers are.",
+  "files": [
+    {
+      "dest": "include/YYToolkit/YYTK_Shared.hpp",
+      "url": "https://raw.githubusercontent.com/AurieFramework/YYToolkit/5a95e46cc4b4e99f16ee3dc0f2ab9ea3c77d18db/ExamplePlugin/include/YYToolkit/YYTK_Shared.hpp",
+      "sha256": "6d6666f1db2553ea0c17658bdc53e65c396bc402053d73257038e66bd713d22a",
+      "provenance": "YYToolkit v4.0.1 (commit 5a95e46), ExamplePlugin/include/YYToolkit/YYTK_Shared.hpp"
+    },
+    {
+      "dest": "include/YYToolkit/YYTK_Shared_Base.hpp",
+      "url": "https://raw.githubusercontent.com/AurieFramework/YYToolkit/5a95e46cc4b4e99f16ee3dc0f2ab9ea3c77d18db/ExamplePlugin/include/YYToolkit/YYTK_Shared_Base.hpp",
+      "sha256": "ab64a23eed8a2358e3fb37a2789bce42cf557b9dbcc4051dc61029859ffcb887",
+      "provenance": "YYToolkit v4.0.1 (commit 5a95e46), ExamplePlugin/include/YYToolkit/YYTK_Shared_Base.hpp"
+    },
+    {
+      "dest": "include/YYToolkit/YYTK_Shared_Interface.hpp",
+      "url": "https://raw.githubusercontent.com/AurieFramework/YYToolkit/5a95e46cc4b4e99f16ee3dc0f2ab9ea3c77d18db/ExamplePlugin/include/YYToolkit/YYTK_Shared_Interface.hpp",
+      "sha256": "bec19a3f956568d85d717acc906de24bed2b5ed965940a82af393808d213a102",
+      "provenance": "YYToolkit v4.0.1 (commit 5a95e46), ExamplePlugin/include/YYToolkit/YYTK_Shared_Interface.hpp"
+    },
+    {
+      "dest": "include/YYToolkit/YYTK_Shared_Types.cpp",
+      "url": "https://raw.githubusercontent.com/AurieFramework/YYToolkit/5a95e46cc4b4e99f16ee3dc0f2ab9ea3c77d18db/ExamplePlugin/include/YYToolkit/YYTK_Shared_Types.cpp",
+      "sha256": "93531e2d1827ec411376b0e4baa7663a8a111c9e7ede49a708cf75ce6c58011e",
+      "provenance": "YYToolkit v4.0.1 (commit 5a95e46), ExamplePlugin/include/YYToolkit/YYTK_Shared_Types.cpp"
+    },
+    {
+      "dest": "include/YYToolkit/YYTK_Shared_Types.hpp",
+      "url": "https://raw.githubusercontent.com/AurieFramework/YYToolkit/5a95e46cc4b4e99f16ee3dc0f2ab9ea3c77d18db/ExamplePlugin/include/YYToolkit/YYTK_Shared_Types.hpp",
+      "sha256": "7d3ad5426a7014e290beba84ed4660dbe7f7c97081efbb3c4a62a7b0cdfbfc1a",
+      "provenance": "YYToolkit v4.0.1 (commit 5a95e46), ExamplePlugin/include/YYToolkit/YYTK_Shared_Types.hpp"
+    },
+    {
+      "dest": "include/FunctionWrapper/FunctionWrapper.hpp",
+      "url": "https://raw.githubusercontent.com/AurieFramework/YYToolkit/5a95e46cc4b4e99f16ee3dc0f2ab9ea3c77d18db/ExamplePlugin/include/FunctionWrapper/FunctionWrapper.hpp",
+      "sha256": "e72e263dcf3403efb196552fa08f2beea8f46f3ff67ae16c7de2b1599c0bccff",
+      "provenance": "YYToolkit v4.0.1 (commit 5a95e46), ExamplePlugin/include/FunctionWrapper/FunctionWrapper.hpp"
+    },
+    {
+      "dest": "include/Aurie/shared.hpp",
+      "url": "https://raw.githubusercontent.com/AurieFramework/Aurie/5c4839ea19d47c6afb7d459358f53643b2774e3a/Aurie/source/framework/shared.hpp",
+      "sha256": "c830652fc89854723520b26ee3fdc7b468abed94131109c032d3b32ed2e1dc5d",
+      "provenance": "Aurie v2.0.2 (commit 5c4839e), Aurie/source/framework/shared.hpp -- NOT YYToolkit v4.0.1's own bundled include/Aurie/shared.hpp, which is a different (older, 1.x) header; players run AurieCore 2.0.2"
+    }
+  ]
+}

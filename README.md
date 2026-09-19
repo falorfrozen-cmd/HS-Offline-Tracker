@@ -162,7 +162,18 @@ npm run check
 npm run package
 ```
 
-`npm run build` is the portable frontend validation step. `npm test` requires the Rust/Windows native toolchain described above.
+`npm run build` is the portable frontend validation step. `npm test` requires the Rust/Windows native toolchain described above. `npm run tools:test` runs the Node tests for the release tooling in `scripts/` and the three release workflows; `npm run check` includes it.
+
+The live sensor compiles against third-party AGPL-3.0 headers that are pinned by SHA-256 in `aurie-producer/toolchain-pins.json` and never committed. `node scripts/fetch-producer-sdk.mjs` places them under the git-ignored `aurie-producer/.sdk/`, verifying every hash before it writes anything; then build with `powershell -File aurie-producer/build.ps1 -Configuration Release -YytkSdkRoot aurie-producer/.sdk`.
+
+### Releasing
+
+Releases are cut from GitHub Actions, draft-first. Nothing in the chain publishes.
+
+1. Write `release-notes-vX.Y.Z.md` at the repository root in the same pull request as the player-visible change it describes.
+2. Run **Actions > Tracker tag > Run workflow** with the tag (for example `v0.1.4`). It refuses a malformed version, a tag that already exists, a version behind the highest existing tag or behind what `main` already holds, and a version that already has a release (drafts included). It then moves the version across every file that carries one (`npm run ver -- --check` shows them) and pushes that bump to `main` before the tag, then pushes the tag and leaves a **draft** release whose body is composed from the notes files. With no notes file, the body is GitHub's generated notes under a banner asking for a rewrite.
+3. The tag workflow starts **Tracker release** (`tracker-release.yml`), which checks out the tag on a Windows runner, fetches and verifies the pinned headers, builds the live sensor, the web interface and the Tauri bundle, runs the tests, and uploads `hs-offline-tracker-X.Y.Z-portable.zip`, the NSIS setup and `SHA256SUMS-X.Y.Z.txt` to the draft. Run it by hand with a `tag` to refill an existing draft; `dry_run` (the default for a manual run) uploads a workflow artifact instead of touching the release.
+4. Install from the draft's own zip and check it against a real installation, then press **Publish**. Publishing fires `notify-hub-release.yml`, and **Tracker notes cleanup** (`tracker-notes-cleanup.yml`) removes the notes files the release carried.
 
 ## Privacy and safety boundaries
 
