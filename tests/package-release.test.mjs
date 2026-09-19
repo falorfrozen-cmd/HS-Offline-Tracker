@@ -85,6 +85,55 @@ test('buildZip/readZipEntries round-trip', () => {
   assert.equal(read[1].size, 5);
 });
 
+// Checked against the ZIP format itself (APPNOTE 4.3.16 / 4.3.12 / 4.3.7), not
+// against readZipEntries, which shares the writer's idea of the layout: the
+// v0.1.3 draft's zip round-tripped through readZipEntries and still failed
+// in every real unzip tool, because the end record's comment-length write
+// landed on the top half of the central-directory offset. The payload is
+// past 64 KiB so the offset's top half is non-zero -- the positive control
+// for that bug; a tree of small files cannot see it.
+test('buildZip -- end record and every offset follow the ZIP format past 64 KiB', () => {
+  const big = Buffer.alloc(200 * 1024, 0xab);
+  const entries = [
+    { name: 'big.bin', data: big },
+    { name: 'small.txt', data: Buffer.from('after the big one') },
+  ];
+  const zip = buildZip(entries);
+
+  const eocd = zip.length - 22;
+  assert.equal(zip.readUInt32LE(eocd), 0x06054b50, 'end record at the very end (no comment)');
+  assert.equal(zip.readUInt16LE(eocd + 8), 2, 'entries on this disk');
+  assert.equal(zip.readUInt16LE(eocd + 10), 2, 'total entries');
+  const cdSize = zip.readUInt32LE(eocd + 12);
+  const cdOffset = zip.readUInt32LE(eocd + 16);
+  assert.equal(zip.readUInt16LE(eocd + 20), 0, 'comment length');
+  assert.ok(cdOffset > 0xffff, 'test must exercise an offset past 64 KiB');
+  assert.equal(cdOffset + cdSize, eocd, 'central directory ends where the end record starts');
+  assert.equal(zip.readUInt32LE(cdOffset), 0x02014b50, 'central directory starts at the recorded offset');
+
+  let p = cdOffset;
+  for (const { name, data } of entries) {
+    assert.equal(zip.readUInt32LE(p), 0x02014b50);
+    const nameLen = zip.readUInt16LE(p + 28);
+    assert.equal(zip.toString('utf8', p + 46, p + 46 + nameLen), name);
+    const local = zip.readUInt32LE(p + 42);
+    assert.equal(zip.readUInt32LE(local), 0x04034b50, `${name}: local header at its recorded offset`);
+    const localNameLen = zip.readUInt16LE(local + 26);
+    const start = local + 30 + localNameLen + zip.readUInt16LE(local + 28);
+    assert.ok(zip.subarray(start, start + data.length).equals(data), `${name}: stored bytes intact`);
+    p += 46 + nameLen;
+  }
+
+  assert.deepEqual(readZipEntries(zip).map((e) => e.name), ['big.bin', 'small.txt']);
+});
+
+test('readZipEntries refuses an end record whose offset does not meet it (negative control)', () => {
+  const zip = buildZip([{ name: 'big.bin', data: Buffer.alloc(100 * 1024) }]);
+  // Reproduce the old bug: zero the top half of the central-directory offset.
+  zip.writeUInt16LE(0, zip.length - 22 + 18);
+  assert.throws(() => readZipEntries(zip), /end-of-central-directory record says/);
+});
+
 test('packageRelease -- zip name, no wrapping directory, every resource present', () => {
   const version = '0.1.3';
   const root = buildFakeTree(version);
