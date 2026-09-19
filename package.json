@@ -16,8 +16,9 @@
     "ver": "node scripts/set-version.mjs",
     "tauri": "node scripts/tauri.mjs",
     "test": "node scripts/test.mjs",
+    "tools:test": "node scripts/test-tools.mjs",
     "loader:verify": "node scripts/verify-loader.mjs",
-    "check": "npm run build && npm test && npm run loader:verify"
+    "check": "npm run build && npm test && npm run tools:test && npm run loader:verify"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1"
