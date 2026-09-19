@@ -116,7 +116,15 @@ test('packageRelease -- zip name, no wrapping directory, every resource present'
     const checksums = parseChecksums(sumsText);
     assert.equal(Object.keys(checksums).length, 2);
     assert.equal(checksums[result.zipName], sha256Hex(zipBytes));
-    assert.equal(checksums[result.setupName], sha256Hex(readFileSync(join(root, 'src-tauri', 'target', 'release', 'bundle', 'nsis', result.setupName))));
+    const originalSetupBytes = readFileSync(join(root, 'src-tauri', 'target', 'release', 'bundle', 'nsis', result.setupName));
+    assert.equal(checksums[result.setupName], sha256Hex(originalSetupBytes));
+
+    // The setup .exe is copied into --out too, not just hashed in place --
+    // the workflow uploads out/'s contents, so a setup left at its original
+    // build location would never reach the draft.
+    assert.equal(result.setupPath, join(out, result.setupName));
+    const copiedSetupBytes = readFileSync(result.setupPath);
+    assert.deepEqual(copiedSetupBytes, originalSetupBytes);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

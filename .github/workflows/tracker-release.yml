@@ -194,7 +194,11 @@ jobs:
           out=$(node scripts/package-release.mjs --version "$VERSION" --out "$RUNNER_TEMP/out")
           echo "$out"
           zip_path=$(echo "$out" | sed -n '1p')
+          setup_path=$(echo "$out" | sed -n '2p')
+          sums_path=$(echo "$out" | sed -n '3p')
           echo "zip_path=$zip_path" >> "$GITHUB_OUTPUT"
+          echo "setup_path=$setup_path" >> "$GITHUB_OUTPUT"
+          echo "sums_path=$sums_path" >> "$GITHUB_OUTPUT"
           echo "zip_hash=$(sha256sum "$zip_path" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       # A dry run never touches the draft; the built artefacts are only kept
@@ -235,11 +239,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           TAG: ${{ steps.tag.outputs.tag }}
-          VERSION: ${{ steps.tag.outputs.version }}
+          ZIP_PATH: ${{ steps.package.outputs.zip_path }}
+          SETUP_PATH: ${{ steps.package.outputs.setup_path }}
+          SUMS_PATH: ${{ steps.package.outputs.sums_path }}
         run: |
           gh release upload "$TAG" \
-            "$RUNNER_TEMP/out/hs-offline-tracker-$VERSION-portable.zip" \
-            "$RUNNER_TEMP/out/SHA256SUMS-$VERSION.txt" \
+            "$ZIP_PATH" \
+            "$SETUP_PATH" \
+            "$SUMS_PATH" \
             --clobber --repo "$REPO"
 
       - name: Summary

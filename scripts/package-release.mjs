@@ -1,5 +1,7 @@
 // Assemble the release artefacts from an already-built tree: the portable
-// zip and one SHA256SUMS-<version>.txt. Nothing here builds anything --
+// zip, a copy of the NSIS setup, and one SHA256SUMS-<version>.txt -- all
+// three land in --out so the workflow can upload the directory's contents
+// without re-deriving any path. Nothing here builds anything --
 // tracker-release.yml runs `npm run build` and the Tauri bundle first.
 //
 //   node scripts/package-release.mjs [--root <dir>] [--version <v>] [--out <dir>]
@@ -32,7 +34,7 @@
 // table technique and node:fs/node:crypto, the same "no dependency" property
 // every other new script here has.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -193,7 +195,7 @@ function nsisSetupName(productName, version) {
  * @param {string} options.root - repository root of the already-built tree
  * @param {string} options.version
  * @param {string} options.out - output directory
- * @returns {{zipPath: string, sumsPath: string, zipName: string, setupName: string}}
+ * @returns {{zipPath: string, sumsPath: string, setupPath: string, zipName: string, setupName: string, sumsName: string}}
  */
 export function packageRelease({ root, version, out }) {
   const srcTauriDir = join(root, 'src-tauri');
@@ -230,6 +232,8 @@ export function packageRelease({ root, version, out }) {
 
   const setupName = nsisSetupName(productName, version);
   const setupBytes = readFileSync(setupPath);
+  const setupOutPath = join(out, setupName);
+  copyFileSync(setupPath, setupOutPath);
   const zipBytes = readFileSync(zipPath);
 
   const sumsLines = [`${sha256Hex(zipBytes)}  ${zipName}`, `${sha256Hex(setupBytes)}  ${setupName}`];
@@ -237,7 +241,7 @@ export function packageRelease({ root, version, out }) {
   const sumsPath = join(out, sumsName);
   writeFileSync(sumsPath, `${sumsLines.join('\n')}\n`);
 
-  return { zipPath, sumsPath, zipName, setupName, sumsName };
+  return { zipPath, sumsPath, setupPath: setupOutPath, zipName, setupName, sumsName };
 }
 
 function main(argv) {
@@ -272,6 +276,7 @@ function main(argv) {
   }
 
   console.log(result.zipPath);
+  console.log(result.setupPath);
   console.log(result.sumsPath);
 }
 

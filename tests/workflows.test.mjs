@@ -274,12 +274,28 @@ test('tracker-release.yml: a dry run uploads nothing to the draft, only a workfl
   assert.match(t, /upload-artifact@v4/);
 });
 
-test('tracker-release.yml: the upload uses --clobber and both artefacts', () => {
+test('tracker-release.yml: the upload uses --clobber and all three artefacts', () => {
   const t = text('tracker-release.yml');
   assert.match(t, /gh release upload/);
   assert.match(t, /--clobber/);
-  assert.match(t, /portable\.zip/);
-  assert.match(t, /SHA256SUMS-/);
+  // The packager's own stdout order (zip, setup, sums) is what the workflow
+  // captures into these outputs -- see package-release.mjs's main().
+  assert.match(t, /zip_path=\$zip_path/);
+  assert.match(t, /setup_path=\$setup_path/);
+  assert.match(t, /sums_path=\$sums_path/);
+  const upload = codeLines(t)
+    .join('\n')
+    .match(/gh release upload[\s\S]*?--clobber --repo "\$REPO"/)[0];
+  assert.match(upload, /\$ZIP_PATH/);
+  assert.match(upload, /\$SETUP_PATH/);
+  assert.match(upload, /\$SUMS_PATH/);
+});
+
+test('tracker-release.yml: the upload step env wires ZIP_PATH/SETUP_PATH/SUMS_PATH from the package step outputs', () => {
+  const t = text('tracker-release.yml');
+  assert.match(t, /ZIP_PATH: \$\{\{ steps\.package\.outputs\.zip_path \}\}/);
+  assert.match(t, /SETUP_PATH: \$\{\{ steps\.package\.outputs\.setup_path \}\}/);
+  assert.match(t, /SUMS_PATH: \$\{\{ steps\.package\.outputs\.sums_path \}\}/);
 });
 
 test('tracker-release.yml: never creates, edits or publishes a release, and never dispatches another workflow', () => {
