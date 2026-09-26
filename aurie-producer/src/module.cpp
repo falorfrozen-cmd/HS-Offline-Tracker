@@ -4,6 +4,7 @@
 #include "hsot/event_protocol.h"
 #include "hsot/event_transport.h"
 #include "hsot_aurie/counter_validation.h"
+#include "hsot_aurie/exit_safe_thread.h"
 #include "hsot_aurie/producer_profile.h"
 
 #include <Windows.h>
@@ -25,6 +26,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace Aurie;
@@ -35,7 +37,10 @@ namespace {
 constexpr std::string_view kEventSource = "aurie_named_gml";
 
 YYTKInterface* g_yytk{};
-std::unique_ptr<hsot::IEventTransport> g_transport;
+// A plain pointer, like g_publish_worker below: its pipe worker is a thread
+// too, so it is freed only by ModuleUnload after that worker is joined, never
+// by a static destructor at process exit.
+hsot::IEventTransport* g_transport{};
 std::mutex g_transport_mutex;
 std::atomic_bool g_stopping{};
 std::atomic_bool g_transport_stopped{};
@@ -161,7 +166,9 @@ std::optional<DropSnapshot> g_retry_drop;
 std::atomic_uint64_t g_drop_queue_dropped{};
 std::mutex g_publish_wait_mutex;
 std::condition_variable g_publish_wake;
-std::thread g_publish_worker;
+// Never a std::thread global: when the game exited, its destructor ran while it
+// was still joinable and aborted the process (see exit_safe_thread.h).
+hsot::aurie::ExitSafeThread g_publish_worker;
 
 // ---- Zone / room sensing ---------------------------------------------------
 //
@@ -1574,27 +1581,11 @@ void PublishWorkerLoop() noexcept {
 }
 
 [[nodiscard]] bool StartPublishWorker(std::string& detail) noexcept {
-    try {
-        g_publish_worker = std::thread(&PublishWorkerLoop);
+    if (g_publish_worker.Start(&PublishWorkerLoop)) {
         return true;
-    } catch (...) {
-        detail = "background publisher thread could not start";
-        return false;
     }
-}
-
-void StopPublishWorker() noexcept {
-    g_stopping.store(true, std::memory_order_release);
-    g_publish_wake.notify_all();
-    if (!g_publish_worker.joinable()) {
-        return;
-    }
-    try {
-        g_publish_worker.join();
-    } catch (...) {
-        // Aurie is already unloading. Avoid allowing cleanup exceptions to
-        // cross the module boundary.
-    }
+    detail = "background publisher thread could not start";
+    return false;
 }
 
 void StopTransport() noexcept {
@@ -1608,27 +1599,57 @@ void StopTransport() noexcept {
     }
 }
 
+// Frees the transport once StopTransport has joined its pipe worker.
+void ReleaseTransport() noexcept {
+    hsot::IEventTransport* transport{};
+    {
+        std::scoped_lock lock(g_transport_mutex);
+        transport = std::exchange(g_transport, nullptr);
+    }
+    delete transport;
+}
+
 } // namespace
 
-EXPORTED void ModuleOperationCallback(
-    IN AurieModule* affected_module,
-    IN AurieModuleOperationType operation_type,
-    OPTIONAL IN OUT AurieOperationInfo* operation_info) {
-    if (affected_module != g_ArSelfModule || operation_type != AURIE_OPERATION_UNLOAD) {
-        return;
-    }
-    if (!operation_info || !operation_info->IsFutureCall) {
-        return;
-    }
+// Aurie calls this before it unmaps the module, after it has removed the
+// module's hooks: from MdUnmapImage, and from its own DLL_PROCESS_DETACH, with
+// the loader lock held, when the framework is unloaded. It is not called when
+// the game exits. It has to be this export: Aurie dispatches the unload
+// operation callbacks only for a module that exports ModuleUnload.
+EXPORTED AurieStatus ModuleUnload(
+    IN AurieModule* module,
+    IN const fs::path& module_path) {
+    UNREFERENCED_PARAMETER(module);
+    UNREFERENCED_PARAMETER(module_path);
+
     g_stopping.store(true, std::memory_order_release);
-    StopPublishWorker();
-    const auto dropped = g_drop_queue_dropped.exchange(0U, std::memory_order_acq_rel);
-    if (dropped != 0U && g_yytk) {
-        g_yytk->Print(CM_LIGHTRED,
-            "[HS Offline Tracker] %llu rare drops were skipped to keep gameplay non-blocking",
-            static_cast<unsigned long long>(dropped));
+    g_publish_wake.notify_all();
+    // Every ModuleInitialize path that does not start the publisher leaves no
+    // pipe worker running, so StopTransport below never joins a thread unless
+    // the publisher's join has just shown that threads can exit here.
+    const auto outcome = hsot::aurie::StopForUnload(g_publish_worker, [] {
+        StopTransport();
+        ReleaseTransport();
+    });
+
+    // Written to the log file, not the YYToolkit console: when Aurie itself
+    // unloads, YYToolkit may already be gone.
+    try {
+        const auto dropped = g_drop_queue_dropped.exchange(0U, std::memory_order_acq_rel);
+        if (dropped != 0U) {
+            LogFile(std::to_string(dropped) + " rare drops were skipped to keep gameplay non-blocking");
+        }
+        if (outcome == hsot::aurie::UnloadOutcome::pinned) {
+            LogFile("unload: the publisher did not stop within " +
+                std::to_string(hsot::aurie::kUnloadJoinTimeout.count()) +
+                " ms; the module stays loaded until the game exits");
+        } else if (outcome == hsot::aurie::UnloadOutcome::pin_failed) {
+            LogFile("unload: the publisher did not stop and the module could not be pinned");
+        }
+    } catch (...) {
+        // Nothing may cross back into Aurie from its unload.
     }
-    StopTransport();
+    return AURIE_SUCCESS;
 }
 
 EXPORTED AurieStatus ModuleInitialize(
@@ -1647,7 +1668,7 @@ EXPORTED AurieStatus ModuleInitialize(
     }
 
     LogFile("module loaded; starting local transport");
-    g_transport = hsot::CreateLocalNamedPipeTransport(512U);
+    g_transport = hsot::CreateLocalNamedPipeTransport(512U).release();
     std::string transport_detail;
     if (!g_transport || !g_transport->Start(GetCurrentProcessId(), transport_detail)) {
         LogFile("transport failed: " + transport_detail);
