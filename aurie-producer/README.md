@@ -59,7 +59,8 @@ not register a YYToolkit frame callback. The transport performs connection and
 write I/O on its own bounded worker thread. No serialization, allocation, pipe
 I/O or blocking lock runs inside a game hook. Release builds do not install a
 Magic Find observer or collect per-event diagnostic/timing counters. A full
-queue fails open to protect gameplay and reports its skipped count once at unload.
+queue fails open to protect gameplay; the skipped count is written to
+`%LOCALAPPDATA%\HS Offline Tracker\producer.log` when Aurie unloads the module.
 
 - `gml_Script_RoomGoto`: after the original returns, argument 0 (the target
   room) becomes a `room` event via `room_get_name`. The same hook reads
@@ -73,6 +74,38 @@ queue fails open to protect gameplay and reports its skipped count once at unloa
   sheet prints is unsettled, and the sheet's own dispatcher, ReturnSpecificStat,
   could not be hooked without crashing 7.0.6.0 at startup. The hook code stays in
   place for a future build.
+
+## Shutdown
+
+The module owns two threads, the publisher and the transport's pipe worker, and
+they end in one of two ways:
+
+- **The game exits.** `ExitProcess` terminates every other thread first and
+  only then runs `DLL_PROCESS_DETACH`, where the CRT destroys the module's static
+  objects; Aurie calls no unload routine at that point. A `std::thread` global
+  is still joinable there, and destroying it calls `std::terminate`, so a game
+  exit used to end in `ucrtbase!abort` (`0xc0000409`, fast-fail 7) and a Windows
+  Error Reporting dump. The publisher is therefore an `ExitSafeThread`
+  (`include/hsot_aurie/exit_safe_thread.h`) and the transport a plain pointer.
+  Neither has a static destructor: nothing runs at process exit, and the OS
+  reclaims both.
+- **Aurie unloads the module.** `ModuleUnload` stops the publisher and waits up
+  to 2 s to join it, then stops the transport, which joins the pipe worker, and
+  frees both. Aurie also calls `ModuleUnload` from its own `DllMain` when the
+  framework itself is unloaded (the Aurie console's *Unload framework*). The
+  loader lock is held there, a thread cannot finish exiting until it is
+  released, and the wait runs out; the module then pins itself, staying loaded
+  with its threads until the game exits, instead of letting `FreeLibrary` unmap
+  code that is still running. It has to be the `ModuleUnload` export: Aurie
+  dispatches its unload callbacks only for a module that exports it.
+
+`tests/exit_teardown_smoke.cpp` covers both, each case in a child process: a
+control with the old `std::thread` global aborts at `ExitProcess`; the current
+shape exits cleanly with both threads running; `ModuleUnload` on an ordinary
+thread joins both threads and `FreeLibrary` unmaps the module; a publisher that
+does not stop in time gets the module pinned; and `ModuleUnload` called from
+another DLL's `DLL_PROCESS_DETACH`, standing in for AurieCore, returns after the
+bounded wait. No case can leave a crash report or dump behind.
 
 ## Build
 
