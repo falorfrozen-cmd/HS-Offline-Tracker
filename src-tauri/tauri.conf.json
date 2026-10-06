@@ -72,7 +72,9 @@
       "../aurie-loader/YYToolkit.dll": "aurie-loader/YYToolkit.dll",
       "../aurie-loader/AuriePatcher.exe": "aurie-loader/AuriePatcher.exe",
       "../aurie-loader/yytoolkit-modified/NOTICE.md": "aurie-loader/yytoolkit-modified/NOTICE.md",
-      "../aurie-loader/yytoolkit-modified/YYToolkit-BUILD-INFO.json": "aurie-loader/yytoolkit-modified/YYToolkit-BUILD-INFO.json"
+      "../aurie-loader/yytoolkit-modified/YYToolkit-BUILD-INFO.json": "aurie-loader/yytoolkit-modified/YYToolkit-BUILD-INFO.json",
+      "../aurie-loader/aurie-modified/NOTICE.md": "aurie-loader/aurie-modified/NOTICE.md",
+      "../aurie-loader/aurie-modified/AurieCore-BUILD-INFO.json": "aurie-loader/aurie-modified/AurieCore-BUILD-INFO.json"
     },
     "licenseFile": "../LICENSE",
     "shortDescription": "Offline Hero Siege loot journal and overlay",
