@@ -109,8 +109,13 @@ test('write() -- refuses a half-bumped tree rather than rewriting what matches',
 });
 
 test('CLI --check --expect matches this checkout', () => {
-  const out = execFileSync(process.execPath, [SCRIPT, '--check', '--expect', '0.1.3'], {
-    cwd: new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'),
+  // Read the version from the checkout rather than pinning it: the release
+  // workflow's "Cut X.Y.Z" commit bumps every site, and a literal here then
+  // fails the very release it is meant to guard (v0.1.4's first run).
+  const cwd = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+  const { version } = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8'));
+  const out = execFileSync(process.execPath, [SCRIPT, '--check', '--expect', version], {
+    cwd,
     encoding: 'utf8',
   });
   assert.ok(!out.includes('MISSING'));
