@@ -69,8 +69,18 @@ live sensor can be installed without any other tool (`aurie-loader/`):
 - Project: Aurie Framework
 - Upstream repository: <https://github.com/AurieFramework/Aurie>
 - License: AGPL-3.0
-- Files: `AurieCore.dll`, `AuriePatcher.exe` — **unmodified** builds of the
-  upstream project; their corresponding source is the repository above.
+- File: `AuriePatcher.exe` — an **unmodified** build of the upstream
+  project (v2.0.2); its corresponding source is the repository above.
+- File: `AurieCore.dll` (series revision `hs.1`, sha256
+  `3cf98af99a0ef38dea1a2d4627e6466631f6e7dd2b254b1a80e5438ac06800cb`) — upstream
+  v2.0.2 **modified** by a two-patch series maintained in the
+  `hero-siege-offline-toolkit` hub repository's `third_party/aurie/` directory
+  (the freeze around each hook install walks only the game's own threads), and
+  published there as the library release `aurie-v2.0.2-hs.1`.
+  [aurie-loader/aurie-modified/NOTICE.md](aurie-loader/aurie-modified/NOTICE.md)
+  names the patch set and, together with the hub repository at the commit
+  `AurieCore-BUILD-INFO.json` records, is the corresponding source. Releases
+  before 0.1.4 shipped upstream's unmodified `AurieCore.dll`.
 
 They are placed next to the game only when the user presses **Install live
 sensor** in Settings. A clean copy of the game executable is kept as

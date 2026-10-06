@@ -94,14 +94,22 @@ files), and the backup reverts the patch either way. The loader files ship in
 
 On an installation that already has the loader and a patched executable,
 **Reinstall live sensor** does not re-run `AuriePatcher.exe` — it only checks
-`mods/aurie/YYToolkit.dll` against `aurie-loader/loader-manifest.json` (the same
-manifest `npm run loader:verify` checks the bundled binaries against, read by
-`src-tauri` at compile time) and classifies it as current, an earlier release
+`AurieCore.dll` and `mods/aurie/YYToolkit.dll` against
+`aurie-loader/loader-manifest.json` (the same manifest `npm run loader:verify`
+checks the bundled binaries against, read by `src-tauri` at compile time) and
+classifies each as current, an earlier release
 this bundle knows to safely replace ("superseded"), or unrecognized. A current
 copy is left alone; a superseded one is updated in place; an unrecognized one —
 which may be a newer loader another tool installed — is left alone too, and
 **Settings > Game link** says which of the three it saw so an update is never
-silent and never a downgrade.
+silent and never a downgrade. A first install that sets the loader up applies
+the same rule to an `AurieCore.dll` already beside the game.
+
+The bundled `AurieCore.dll` is not upstream's: it is Aurie v2.0.2 plus the
+toolkit hub's `third_party/aurie/` patch series (`hs.1`), whose freeze around
+each hook install walks only the game's own threads instead of every thread on
+the system. ForgePact ships the same file. Its notice and build record are in
+`aurie-loader/aurie-modified/`.
 
 The sensor resolves the game's routines by name, so it keeps working after game
 updates; the status lines on that page say whether the game is seen, the loader

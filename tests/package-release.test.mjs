@@ -31,6 +31,8 @@ const RESOURCES = {
   '../aurie-loader/AuriePatcher.exe': 'aurie-loader/AuriePatcher.exe',
   '../aurie-loader/yytoolkit-modified/NOTICE.md': 'aurie-loader/yytoolkit-modified/NOTICE.md',
   '../aurie-loader/yytoolkit-modified/YYToolkit-BUILD-INFO.json': 'aurie-loader/yytoolkit-modified/YYToolkit-BUILD-INFO.json',
+  '../aurie-loader/aurie-modified/NOTICE.md': 'aurie-loader/aurie-modified/NOTICE.md',
+  '../aurie-loader/aurie-modified/AurieCore-BUILD-INFO.json': 'aurie-loader/aurie-modified/AurieCore-BUILD-INFO.json',
 };
 
 function writeFile(path, content) {
@@ -153,11 +155,11 @@ test('packageRelease -- zip name, no wrapping directory, every resource present'
     assert.ok(names.includes('hs-offline-tracker.exe'));
     assert.ok(!names.some((n) => n.startsWith('hs-offline-tracker-0.1.3/')));
 
-    // Every bundle.resources destination is present -- 9 resources + the exe.
+    // Every bundle.resources destination is present -- 11 resources + the exe.
     const expectedDests = Object.values(RESOURCES);
-    assert.equal(expectedDests.length, 9);
+    assert.equal(expectedDests.length, 11);
     for (const dest of expectedDests) assert.ok(names.includes(dest), dest);
-    assert.equal(entries.length, 10);
+    assert.equal(entries.length, 12);
 
     // The checksum file parses under the hub's own rules, with an entry for
     // each artefact.
