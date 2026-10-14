@@ -1,5 +1,9 @@
 # HS Offline Tracker
 
+> **HS Offline Tracker is frozen. Its features now live in ForgePact 2.3.0's Tracker tab.**
+> [ForgePact](https://github.com/falorfrozen-cmd/ForgePact) imports this app's runs, settings, shopping list and sounds, so you keep what you have.
+> This repository takes no new features. The 0.1.4 release, with its fixed sensor, stays available if you want to keep using it.
+
 HS Offline Tracker is a desktop loot journal, alert engine and compact overlay for Hero Siege offline play. It consumes a small, versioned local event stream and turns new events into session totals, run history, configurable drop sounds and a priority-aware notification stack.
 
 This project does **not** capture network traffic and does not require Npcap, libpcap or a packet-capture driver. It is also not an anti-cheat bypass, injector or online-play tool. Use it only with offline/single-player sessions.
